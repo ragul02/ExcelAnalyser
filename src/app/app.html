@@ -14,7 +14,7 @@
         <input type="file" accept=".dvis,.json" (change)="openProject($event)" />
       </label>
       <button type="button" (click)="saveProject()" [disabled]="!rows().length">Save</button>
-      <button type="button" (click)="restoreAutosave()">Recover</button>
+      <!-- <button type="button" (click)="restoreAutosave()">Recover</button> -->
     </nav>
   </header>
 
@@ -54,13 +54,13 @@
       </div>
 
       <div class="field-list">
-        <h3>Dimensions</h3>
+        <h3>X Axis Fields</h3>
         @for (field of dimensions(); track field.name) {
           <button type="button" (click)="chart.dimension = field.name; applyRecommendation()">
             <span>{{ field.name }}</span><small>{{ field.type }}</small>
           </button>
         }
-        <h3>Measures</h3>
+        <h3>Y Axis Fields</h3>
         @for (field of measures(); track field.name) {
           <button type="button" (click)="chart.measure = field.name; applyRecommendation()">
             <span>{{ field.name }}</span><small>{{ field.type }}</small>
@@ -125,6 +125,14 @@
       }
 
       @if (rows().length && selectedTab === 'profile') {
+        <section class="explainer">
+          <h2>Data Profile</h2>
+          <p>
+            Use this page to understand your imported file before building charts. The app checks each column,
+            detects whether it is text, category, number or date, shows missing values and common values,
+            and uses this information to suggest better X axis, Y axis and chart options.
+          </p>
+        </section>
         <div class="profile-grid">
           @for (field of profiles(); track field.name) {
             <article class="profile-card">
@@ -183,7 +191,7 @@
           <header>
             <div>
               <h2>Executive Dashboard</h2>
-              <p>Saved charts recalculate with active filters and can be exported without editing controls.</p>
+              <p>Saved charts recalculate from the selected X and Y axis fields and can be exported without editing controls.</p>
             </div>
             <button (click)="dashboardEdit = !dashboardEdit">{{ dashboardEdit ? 'Presentation' : 'Edit' }}</button>
           </header>
@@ -209,7 +217,10 @@
         <div class="export-panel">
           <article>
             <h2>Export Results</h2>
-            <p>Exports preserve the current chart, filters and visible project state.</p>
+            <p>Exports preserve the current chart and visible project state.</p>
+            <div class="export-preview">
+              <ng-container [ngTemplateOutlet]="chartTemplate" [ngTemplateOutletContext]="{ data: exportData(), def: chart }"></ng-container>
+            </div>
             <button (click)="exportSvg()">Chart SVG</button>
             <button (click)="exportPng()">Chart PNG</button>
             <button (click)="exportDashboardPdf()">Dashboard PDF</button>
@@ -243,7 +254,7 @@
         </select>
       </label>
       <label class="field">
-        Dimension
+        X Axis / Category Column
         <select [(ngModel)]="chart.dimension" (ngModelChange)="refreshChart()">
           <option value="">None</option>
           @for (column of columns(); track column) {
@@ -252,7 +263,7 @@
         </select>
       </label>
       <label class="field">
-        Measure
+        Y Axis / Value Column
         <select [(ngModel)]="chart.measure" (ngModelChange)="refreshChart()">
           <option value="">None</option>
           @for (column of columns(); track column) {
@@ -262,7 +273,7 @@
       </label>
       @if (chart.type === 'scatter') {
         <label class="field">
-          Y measure
+          Second Y Axis / Value Column
           <select [(ngModel)]="chart.secondMeasure" (ngModelChange)="refreshChart()">
             <option value="">None</option>
             @for (column of columns(); track column) {
@@ -289,6 +300,7 @@
         </select>
       </label>
 
+      <!-- Extra filter controls are intentionally hidden for now to keep the chart builder simple for users.
       <div class="filter-box">
         <h3>Filters</h3>
         <label class="field">
@@ -313,8 +325,9 @@
         <label class="field">Value <input [(ngModel)]="globalFilterValue" (ngModelChange)="refreshChart()" /></label>
         <button (click)="globalFilterField = ''; globalFilterValue = ''; chart.filterField = ''; chart.filterValue = ''; refreshChart()">Reset Filters</button>
       </div>
+      -->
 
-      <div class="calc-box">
+      <!-- <div class="calc-box">
         <h3>Calculated Field</h3>
         <label class="field">Name <input [(ngModel)]="calcName" placeholder="Margin" /></label>
         <label class="field">Formula <input [(ngModel)]="calcFormula" placeholder="Profit / Revenue * 100" /></label>
@@ -323,7 +336,7 @@
         @for (field of calculatedFields; track field.name) {
           <p>{{ field.name }} = {{ field.formula }}</p>
         }
-      </div>
+      </div> -->
 
       <button class="primary wide" (click)="applyRecommendation()">Recommend Chart</button>
       <button class="wide" (click)="saveChart()" [disabled]="!chartData.length">Save Chart</button>
@@ -342,14 +355,17 @@
 
     @if (['bar','histogram','heatmap','treemap'].includes(def.type)) {
       <line x1="55" y1="340" x2="1080" y2="340" stroke="#cbd5e1" />
+      <line x1="55" y1="60" x2="55" y2="340" stroke="#cbd5e1" />
+      <text x="568" y="386" text-anchor="middle" class="axis-title">{{ chartXLabel(def) }}</text>
+      <text x="-200" y="18" text-anchor="middle" class="axis-title" transform="rotate(-90)">{{ chartYLabel(def) }}</text>
       @for (point of data; track point.label; let i = $index) {
         <rect
           [attr.x]="75 + i * (980 / (data.length || 1))"
-          [attr.y]="340 - barHeight(point.value)"
+          [attr.y]="340 - barHeight(point.value, data)"
           [attr.width]="Math.max(16, 780 / (data.length || 1))"
-          [attr.height]="barHeight(point.value)"
+          [attr.height]="barHeight(point.value, data)"
           [attr.fill]="palette(i)"
-          (click)="addFilterFromChart(point)"
+          (click)="addFilterFromChart(point, def)"
         >
           <title>{{ point.label }}: {{ format(point.value) }}</title>
         </rect>
@@ -359,12 +375,15 @@
 
     @if (def.type === 'line' || def.type === 'area') {
       <line x1="55" y1="340" x2="1080" y2="340" stroke="#cbd5e1" />
+      <line x1="55" y1="60" x2="55" y2="340" stroke="#cbd5e1" />
+      <text x="568" y="386" text-anchor="middle" class="axis-title">{{ chartXLabel(def) }}</text>
+      <text x="-200" y="18" text-anchor="middle" class="axis-title" transform="rotate(-90)">{{ chartYLabel(def) }}</text>
       @if (def.type === 'area') {
-        <path [attr.d]="linePath(true)" fill="#93c5fd" opacity=".45" />
+        <path [attr.d]="linePath(data, true)" fill="#93c5fd" opacity=".45" />
       }
-      <path [attr.d]="linePath()" fill="none" stroke="#2563eb" stroke-width="4" />
+      <path [attr.d]="linePath(data)" fill="none" stroke="#2563eb" stroke-width="4" />
       @for (point of data; track point.label; let i = $index) {
-        <circle [attr.cx]="pointX(i)" [attr.cy]="pointY(point.value)" r="5" fill="#0f172a" (click)="addFilterFromChart(point)">
+        <circle [attr.cx]="pointX(i, data)" [attr.cy]="pointY(point.value, data)" r="5" fill="#0f172a" (click)="addFilterFromChart(point, def)">
           <title>{{ point.label }}: {{ format(point.value) }}</title>
         </circle>
       }
@@ -373,15 +392,17 @@
     @if (def.type === 'scatter') {
       <line x1="55" y1="340" x2="1080" y2="340" stroke="#cbd5e1" />
       <line x1="55" y1="60" x2="55" y2="340" stroke="#cbd5e1" />
+      <text x="568" y="386" text-anchor="middle" class="axis-title">{{ chartXLabel(def) }}</text>
+      <text x="-200" y="18" text-anchor="middle" class="axis-title" transform="rotate(-90)">{{ chartYLabel(def) }}</text>
       @for (point of data; track $index) {
-        <circle [attr.cx]="scatterX(point.x)" [attr.cy]="scatterY(point.y)" r="5" fill="#2563eb" opacity=".75">
+        <circle [attr.cx]="scatterX(point.x, data)" [attr.cy]="scatterY(point.y, data)" r="5" fill="#2563eb" opacity=".75">
           <title>{{ point.label }}: {{ format(point.x) }}, {{ format(point.y) }}</title>
         </circle>
       }
     }
 
     @if (def.type === 'pie' || def.type === 'donut') {
-      @for (slice of pieSlices(); track slice.label; let i = $index) {
+      @for (slice of pieSlices(data); track slice.label; let i = $index) {
         <path [attr.d]="slice.path" [attr.fill]="slice.color">
           <title>{{ slice.label }}: {{ format(slice.value) }}</title>
         </path>
@@ -393,11 +414,15 @@
     }
 
     @if (def.type === 'box') {
-      @for (box of boxStats(); track box.label; let i = $index) {
+      <line x1="55" y1="340" x2="1080" y2="340" stroke="#cbd5e1" />
+      <line x1="55" y1="60" x2="55" y2="340" stroke="#cbd5e1" />
+      <text x="568" y="386" text-anchor="middle" class="axis-title">{{ chartXLabel(def) }}</text>
+      <text x="-200" y="18" text-anchor="middle" class="axis-title" transform="rotate(-90)">{{ chartYLabel(def) }}</text>
+      @for (box of boxStats(def); track box.label; let i = $index) {
         <g [attr.transform]="'translate(' + (90 + i * 92) + ',0)'">
-          <line x1="35" [attr.y1]="pointY(box.min)" x2="35" [attr.y2]="pointY(box.max)" stroke="#0f172a" />
-          <rect x="12" [attr.y]="pointY(box.q3)" width="46" [attr.height]="Math.max(4, pointY(box.q1) - pointY(box.q3))" fill="#bfdbfe" stroke="#2563eb" />
-          <line x1="8" [attr.y1]="pointY(box.median)" x2="62" [attr.y2]="pointY(box.median)" stroke="#dc2626" stroke-width="3" />
+          <line x1="35" [attr.y1]="pointY(box.min, data)" x2="35" [attr.y2]="pointY(box.max, data)" stroke="#0f172a" />
+          <rect x="12" [attr.y]="pointY(box.q3, data)" width="46" [attr.height]="Math.max(4, pointY(box.q1, data) - pointY(box.q3, data))" fill="#bfdbfe" stroke="#2563eb" />
+          <line x1="8" [attr.y1]="pointY(box.median, data)" x2="62" [attr.y2]="pointY(box.median, data)" stroke="#dc2626" stroke-width="3" />
           <text x="0" y="365" class="axis">{{ box.label | slice:0:10 }}</text>
         </g>
       }

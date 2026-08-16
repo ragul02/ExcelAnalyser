@@ -300,6 +300,22 @@ th {
   gap: 12px;
 }
 
+.explainer {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.explainer p {
+  margin-top: 6px;
+  max-width: 980px;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .profile-card {
   background: #fff;
   border: 1px solid #d6dee9;
@@ -367,6 +383,12 @@ dd {
   fill: #475569;
 }
 
+.axis-title {
+  font-size: 13px;
+  font-weight: 700;
+  fill: #172033;
+}
+
 .kpi-value {
   font-size: 72px;
   font-weight: 800;
@@ -427,6 +449,14 @@ dd {
 
 .export-panel button {
   margin: 12px 8px 0 0;
+}
+
+.export-preview {
+  margin-top: 12px;
+}
+
+.export-preview .chart-svg {
+  min-height: 260px;
 }
 
 .wide {

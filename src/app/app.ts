@@ -210,25 +210,26 @@ export class App {
   }
 
   refreshChart(): void {
-    const rows = this.filteredRows();
-    const measure = this.chart.measure;
-    const dimension = this.chart.dimension;
-    if (this.chart.type === 'kpi') {
-      this.chartData = [{ label: this.chart.aggregation.toUpperCase(), value: this.aggregate(rows.map((row) => this.toNumber(row[measure])), this.chart.aggregation) }];
-      return;
+    this.chartData = this.computeChartData(this.chart);
+  }
+
+  computeChartData(def: ChartDefinition): ChartPoint[] {
+    const rows = this.filteredRows(def);
+    const measure = def.measure;
+    const dimension = def.dimension;
+    if (def.type === 'kpi') {
+      return [{ label: def.aggregation.toUpperCase(), value: this.aggregate(rows.map((row) => this.toNumber(row[measure])), def.aggregation) }];
     }
-    if (this.chart.type === 'scatter' && this.chart.secondMeasure) {
-      this.chartData = rows.slice(0, 500).map((row) => ({
+    if (def.type === 'scatter' && def.secondMeasure) {
+      return rows.slice(0, 500).map((row) => ({
         label: String(row[dimension] ?? ''),
         value: this.toNumber(row[measure]),
         x: this.toNumber(row[measure]),
-        y: this.toNumber(row[this.chart.secondMeasure]),
+        y: this.toNumber(row[def.secondMeasure]),
       }));
-      return;
     }
-    if (this.chart.type === 'histogram') {
-      this.chartData = this.histogram(rows.map((row) => this.toNumber(row[measure])).filter(Number.isFinite), 12);
-      return;
+    if (def.type === 'histogram') {
+      return this.histogram(rows.map((row) => this.toNumber(row[measure])).filter(Number.isFinite), 12);
     }
     const groups = new Map<string, number[]>();
     for (const row of rows) {
@@ -236,15 +237,23 @@ export class App {
       if (!groups.has(label)) groups.set(label, []);
       groups.get(label)!.push(this.toNumber(row[measure]));
     }
-    let data = [...groups.entries()].map(([label, values]) => ({ label, value: this.aggregate(values, this.chart.aggregation) }));
-    if (this.chart.sort !== 'none') data = data.sort((a, b) => (this.chart.sort === 'asc' ? a.value - b.value : b.value - a.value));
-    if (this.chart.topN > 0) data = data.slice(0, this.chart.topN);
-    this.chartData = data;
+    let data = [...groups.entries()].map(([label, values]) => ({ label, value: this.aggregate(values, def.aggregation) }));
+    if (def.sort !== 'none') data = data.sort((a, b) => (def.sort === 'asc' ? a.value - b.value : b.value - a.value));
+    if (def.topN > 0) data = data.slice(0, def.topN);
+    return data;
   }
 
-  addFilterFromChart(point: ChartPoint): void {
-    if (!this.chart.dimension) return;
-    this.globalFilterField = this.chart.dimension;
+  dashboardData(chart: ChartDefinition): ChartPoint[] {
+    return this.computeChartData(chart);
+  }
+
+  exportData(): ChartPoint[] {
+    return this.computeChartData(this.chart);
+  }
+
+  addFilterFromChart(point: ChartPoint, def = this.chart): void {
+    if (!def.dimension) return;
+    this.globalFilterField = def.dimension;
     this.globalFilterValue = point.label;
     this.refreshChart();
     this.notification = `Cross-filtered dashboard by ${this.globalFilterField}: ${point.label}`;
@@ -284,16 +293,6 @@ export class App {
     return this.savedCharts.find((chart) => chart.id === id);
   }
 
-  dashboardData(chart: ChartDefinition): ChartPoint[] {
-    const previous = this.chart;
-    this.chart = chart;
-    this.refreshChart();
-    const data = this.chartData;
-    this.chart = previous;
-    this.refreshChart();
-    return data;
-  }
-
   profileColumn(column: string): FieldProfile {
     const values = this.rows().map((row) => row[column]).filter((value) => value !== null && value !== undefined && String(value).trim() !== '');
     const missing = this.rows().length - values.length;
@@ -318,7 +317,6 @@ export class App {
         .map(([value, count]) => ({ value, count })),
     };
   }
-
   detectType(column: string, values: unknown[]): FieldType {
     const sample = values.slice(0, 200).map((value) => String(value).trim());
     if (!sample.length) return 'String';
@@ -505,12 +503,13 @@ export class App {
   }
 
   exportDashboardPdf(): void {
-    window.print();
+    this.selectedTab = 'dashboard';
+    setTimeout(() => window.print());
   }
 
-  filteredRows(): Row[] {
+  filteredRows(def = this.chart): Row[] {
     return this.rows().filter((row) => {
-      const chartOk = !this.chart.filterField || String(row[this.chart.filterField] ?? '').toLowerCase().includes(this.chart.filterValue.toLowerCase());
+      const chartOk = !def.filterField || String(row[def.filterField] ?? '').toLowerCase().includes(def.filterValue.toLowerCase());
       const globalOk = !this.globalFilterField || String(row[this.globalFilterField] ?? '') === this.globalFilterValue;
       return chartOk && globalOk;
     });
@@ -564,45 +563,45 @@ export class App {
     return Math.sqrt(this.aggregate(values.map((value) => (value - mean) ** 2), 'avg'));
   }
 
-  barHeight(value: number): number {
-    const max = Math.max(...this.chartData.map((point) => Math.abs(point.value)), 1);
+  barHeight(value: number, data = this.chartData): number {
+    const max = Math.max(...data.map((point) => Math.abs(point.value)), 1);
     return Math.max(2, (Math.abs(value) / max) * 260);
   }
 
-  pointX(index: number): number {
-    return 70 + index * (980 / Math.max(this.chartData.length - 1, 1));
+  pointX(index: number, data = this.chartData): number {
+    return 70 + index * (980 / Math.max(data.length - 1, 1));
   }
 
-  pointY(value: number): number {
-    const values = this.chartData.map((point) => point.value);
+  pointY(value: number, data = this.chartData): number {
+    const values = data.map((point) => point.value);
     const min = Math.min(...values, 0);
     const max = Math.max(...values, 1);
     return 330 - ((value - min) / (max - min || 1)) * 260;
   }
 
-  scatterX(value = 0): number {
-    const values = this.chartData.map((point) => point.x || 0);
+  scatterX(value = 0, data = this.chartData): number {
+    const values = data.map((point) => point.x || 0);
     const min = Math.min(...values);
     const max = Math.max(...values);
     return 70 + ((value - min) / (max - min || 1)) * 980;
   }
 
-  scatterY(value = 0): number {
-    const values = this.chartData.map((point) => point.y || 0);
+  scatterY(value = 0, data = this.chartData): number {
+    const values = data.map((point) => point.y || 0);
     const min = Math.min(...values);
     const max = Math.max(...values);
     return 330 - ((value - min) / (max - min || 1)) * 260;
   }
 
-  linePath(area = false): string {
-    const path = this.chartData.map((point, index) => `${index ? 'L' : 'M'} ${this.pointX(index)} ${this.pointY(point.value)}`).join(' ');
-    return area && this.chartData.length ? `${path} L ${this.pointX(this.chartData.length - 1)} 340 L 70 340 Z` : path;
+  linePath(data = this.chartData, area = false): string {
+    const path = data.map((point, index) => `${index ? 'L' : 'M'} ${this.pointX(index, data)} ${this.pointY(point.value, data)}`).join(' ');
+    return area && data.length ? `${path} L ${this.pointX(data.length - 1, data)} 340 L 70 340 Z` : path;
   }
 
-  pieSlices(): { path: string; color: string; label: string; value: number }[] {
-    const total = this.chartData.reduce((sum, point) => sum + Math.abs(point.value), 0) || 1;
+  pieSlices(data = this.chartData): { path: string; color: string; label: string; value: number }[] {
+    const total = data.reduce((sum, point) => sum + Math.abs(point.value), 0) || 1;
     let start = -Math.PI / 2;
-    return this.chartData.map((point, index) => {
+    return data.map((point, index) => {
       const angle = (Math.abs(point.value) / total) * Math.PI * 2;
       const end = start + angle;
       const large = angle > Math.PI ? 1 : 0;
@@ -617,17 +616,31 @@ export class App {
     });
   }
 
-  boxStats(): { label: string; min: number; q1: number; median: number; q3: number; max: number }[] {
+  boxStats(def = this.chart): { label: string; min: number; q1: number; median: number; q3: number; max: number }[] {
     const groups = new Map<string, number[]>();
-    for (const row of this.filteredRows()) {
-      const label = this.chart.dimension ? String(row[this.chart.dimension] ?? '(blank)') : 'All';
+    for (const row of this.filteredRows(def)) {
+      const label = def.dimension ? String(row[def.dimension] ?? '(blank)') : 'All';
       if (!groups.has(label)) groups.set(label, []);
-      groups.get(label)!.push(this.toNumber(row[this.chart.measure]));
+      groups.get(label)!.push(this.toNumber(row[def.measure]));
     }
-    return [...groups.entries()].slice(0, this.chart.topN || 10).map(([label, values]) => {
+    return [...groups.entries()].slice(0, def.topN || 10).map(([label, values]) => {
       const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
       return { label, min: sorted[0] || 0, q1: sorted[Math.floor(sorted.length * 0.25)] || 0, median: this.median(sorted), q3: sorted[Math.floor(sorted.length * 0.75)] || 0, max: sorted.at(-1) || 0 };
     });
+  }
+
+  chartXLabel(def: ChartDefinition): string {
+    if (def.type === 'scatter') return def.measure || 'X Axis';
+    if (def.type === 'histogram') return def.measure || 'Value';
+    if (def.type === 'kpi' || def.type === 'pie' || def.type === 'donut') return '';
+    return def.dimension || 'X Axis';
+  }
+
+  chartYLabel(def: ChartDefinition): string {
+    if (def.type === 'scatter') return def.secondMeasure || 'Y Axis';
+    if (def.type === 'histogram') return 'Count';
+    if (def.type === 'kpi' || def.type === 'pie' || def.type === 'donut') return '';
+    return `${def.aggregation.toUpperCase()} ${def.measure || 'Y Axis'}`;
   }
 
   palette(index: number): string {
