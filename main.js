@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 
 function createWindow() {
@@ -8,6 +8,7 @@ function createWindow() {
     minWidth: 1100,
     minHeight: 720,
     backgroundColor: '#eef2f7',
+    icon: path.join(__dirname, 'src', 'assets', 'icon', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -18,11 +19,37 @@ function createWindow() {
 
   win.removeMenu();
 
+  // Open dev tools to see errors
+  win.webContents.openDevTools();
+
   if (!app.isPackaged && process.argv.includes('--dev')) {
     win.loadURL('http://127.0.0.1:4200');
   } else {
-    win.loadFile(path.join(__dirname, 'dist', 'ExcelAnalyser', 'browser', 'index.html'));
+    const htmlPath = path.join(__dirname, 'dist', 'ExcelAnalyser', 'browser', 'index.html');
+    console.log('Loading:', htmlPath);
+    win.loadFile(htmlPath);
   }
+  
+  // Log errors
+  win.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error('Failed to load:', errorCode, errorDescription);
+  });
+
+  // Log console messages from renderer
+  win.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    console.log(`[Renderer Console] ${message}`);
+  });
+
+  // Handle external links - open in default browser
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
+  // Emitted when the window is closed
+  win.on('closed', () => {
+    win = null;
+  });
 }
 
 ipcMain.handle('project:choose-open', async () => {

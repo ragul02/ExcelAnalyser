@@ -53,6 +53,7 @@
         <button [class.active]="selectedTab === 'export'" (click)="selectedTab = 'export'">Export</button>
       </div>
 
+      @if( dimensions().length) {
       <div class="field-list">
         <h3>X Axis Fields</h3>
         @for (field of dimensions(); track field.name) {
@@ -67,6 +68,7 @@
           </button>
         }
       </div>
+      }
 
       @if (recentProjects.length) {
         <div class="recent">
