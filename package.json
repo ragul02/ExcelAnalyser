@@ -1,6 +1,8 @@
 {
-  "name": "excel-analyser",
-  "version": "0.0.0",
+  "name": "data-analyser",
+  "version": "1.0.0",
+  "description": "Excel data visualization and analysis application",
+  "author": "Southernstore apps",
   "main": "main.js",
   "scripts": {
     "ng": "ng",
@@ -13,7 +15,11 @@
     "electron:start": "npm run build:prod && electron .",
     "electron:dev": "concurrently \"npm start -- --host 127.0.0.1 --port 4200\" \"wait-on http://127.0.0.1:4200 && electron . --dev\"",
     "electron:build": "npm run build:prod && electron-builder",
-    "electron:build:win": "npm run build:prod && electron-builder --win"
+    "electron:build:win": "npm run build:prod && electron-builder --win",
+    "version:patch": "npm version patch",
+    "version:minor": "npm version minor",
+    "version:major": "npm version major",
+    "release": "npm run version:patch && npm run electron:build:win"
   },
   "private": true,
   "packageManager": "npm@11.16.0",
@@ -24,6 +30,9 @@
     "@angular/forms": "^22.1.0",
     "@angular/platform-browser": "^22.1.0",
     "@angular/router": "^22.1.0",
+    "@tensorflow/tfjs": "^4.22.0",
+    "buffer": "^6.0.3",
+    "comlink": "^4.4.2",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0",
     "xlsx": "^0.18.5"
@@ -42,8 +51,8 @@
     "wait-on": "^9.1.0"
   },
   "build": {
-    "appId": "Southernstoreapps.ExcelAnalyser",
-    "productName": "Excel Analyser",
+    "appId": "Southernstoreapps.DataAnalyzer",
+    "productName": "Data Analyzer",
     "directories": {
       "output": "dist-electron",
       "buildResources": "src/assets"
@@ -51,7 +60,7 @@
     "files": [
       "main.js",
       "preload.js",
-      "dist/ExcelAnalyser/**/*",
+      "dist/DataAnalyzer/**/*",
       "preload.js",
       "package.json",
       "!node_modules/**/*",
@@ -79,22 +88,30 @@
         {
           "target": "appx",
           "arch": [
-            "x64"
+            "x64",
+            "arm64"
           ]
         }
       ],
-      "icon": "src/assets/icon/icon.ico",
-      "publisherName": "CN=D2607C64-7CC3-46F2-9164-7FEBC6EAA60B"
+      "icon": "src/assets/icon/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     },
     "appx": {
-      "identityName": "Southernstoreapps.ExcelAnalyser",
+      "identityName": "Southernstoreapps.DataAnalyzer",
       "publisher": "CN=D2607C64-7CC3-46F2-9164-7FEBC6EAA60B",
-      "displayName": "Excel Analyser",
+      "displayName": "Data Analyzer",
       "publisherDisplayName": "Southernstore apps",
       "backgroundColor": "#464646",
       "languages": [
         "en-US"
-      ]
+      ],
+      "applicationId": "DataAnalyzer",
+      "addAutoLaunchExtension": false,
+      "showNameOnTiles": true,
+      "setBuildNumber": true
     },
     "linux": {
       "target": "AppImage",

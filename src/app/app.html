@@ -23,7 +23,15 @@
     @if (rows().length) {
       <span>{{ rows().length | number }} rows</span>
       <span>{{ columns().length | number }} columns</span>
-      <span>Quality {{ qualityScore }}%</span>
+      <button
+        type="button"
+        class="quality-status"
+        [class.warning]="qualityScore < 70"
+        (click)="toggleQualityDetails()"
+        [attr.aria-expanded]="qualityDetailsOpen"
+      >
+        Quality {{ analytics.qualityScore()?.overall ?? qualityScore }}%
+      </button>
     }
   </section>
 
@@ -48,6 +56,12 @@
       <div class="tabs">
         <button [class.active]="selectedTab === 'data'" (click)="selectedTab = 'data'">Preview</button>
         <button [class.active]="selectedTab === 'profile'" (click)="selectedTab = 'profile'">Profile</button>
+        <button [class.active]="selectedTab === 'insights'" (click)="selectedTab = 'insights'">
+          Insights
+          @if (analytics.hasInsights()) {
+            <span class="badge">{{ analytics.insights().length }}</span>
+          }
+        </button>
         <button [class.active]="selectedTab === 'chart'" (click)="selectedTab = 'chart'">Chart</button>
         <button [class.active]="selectedTab === 'dashboard'" (click)="selectedTab = 'dashboard'">Dashboard</button>
         <button [class.active]="selectedTab === 'export'" (click)="selectedTab = 'export'">Export</button>
@@ -167,6 +181,70 @@
         </div>
       }
 
+      @if (rows().length && selectedTab === 'insights') {
+        <section class="insights-view" aria-labelledby="insights-heading">
+          <header class="explainer insights-header">
+            <div>
+              <p class="eyebrow">Advanced analytics</p>
+              <h2 id="insights-heading">Insights from your data</h2>
+              <p>
+                Automatically detected patterns, relationships, and unusual values ranked by confidence.
+                Select an insight to explore it as a chart.
+              </p>
+            </div>
+            @if (analytics.isAnalyzing()) {
+              <div class="analyzing-indicator" role="status" aria-live="polite">
+                <span class="spinner" aria-hidden="true"></span>
+                <span>{{ analytics.analysisStage() || 'Analyzing dataset...' }}</span>
+              </div>
+            }
+          </header>
+
+          @if (analytics.analysisError(); as error) {
+            <div class="insights-state error" role="alert">
+              <strong>Insights are temporarily unavailable.</strong>
+              <span>{{ error }}</span>
+            </div>
+          } @else if (!analytics.isAnalyzing() && analytics.topInsights().length) {
+            <div class="insights-grid">
+              @for (insight of analytics.topInsights(); track insight.id) {
+                <article class="insight-card" [class]="insightConfidenceClass(insight.confidence)">
+                  <div class="insight-card-header">
+                    <span class="insight-type-badge">{{ insightTypeLabel(insight.type) }}</span>
+                    <span class="confidence-badge" [attr.aria-label]="insight.confidence + '% confidence'">
+                      {{ insight.confidence | number:'1.0-0' }}% confidence
+                    </span>
+                  </div>
+                  <h3>{{ insight.title }}</h3>
+                  <p>{{ insight.description }}</p>
+                  <div class="affected-fields">
+                    @for (field of insight.affectedFields; track field) {
+                      <span>{{ field }}</span>
+                    }
+                  </div>
+                  <div class="insight-actions">
+                    <button type="button" class="primary" (click)="visualizeInsight(insight)">Visualize</button>
+                    <button
+                      type="button"
+                      class="dismiss-button"
+                      (click)="analytics.dismissInsight(insight.id)"
+                      [attr.aria-label]="'Dismiss ' + insight.title"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </article>
+              }
+            </div>
+          } @else if (!analytics.isAnalyzing()) {
+            <div class="insights-state" role="status">
+              <strong>No actionable insights found yet.</strong>
+              <span>Load a dataset with numeric or date fields to discover patterns automatically.</span>
+            </div>
+          }
+        </section>
+      }
+
       @if (rows().length && selectedTab === 'chart') {
         <div class="chart-stage">
           <div class="chart-shell">
@@ -255,6 +333,29 @@
           }
         </select>
       </label>
+      @if (selectedTab === 'chart' && canForecast()) {
+        <section class="forecast-box" aria-labelledby="forecast-heading">
+          <div class="forecast-heading">
+            <h3 id="forecast-heading">Forecast</h3>
+            <span>{{ forecastData()?.predictions?.length || 0 }} periods</span>
+          </div>
+          <label class="field">
+            Future periods
+            <input type="number" min="1" max="100" [(ngModel)]="forecastPeriods" />
+          </label>
+          <button type="button" class="primary wide" (click)="generateForecast()" [disabled]="forecastBusy">
+            {{ forecastBusy ? 'Generating...' : forecastData() ? 'Update forecast' : 'Generate forecast' }}
+          </button>
+          @if (forecastError) {
+            <p class="error" role="alert">{{ forecastError }}</p>
+          }
+          @if (forecastData(); as forecast) {
+            <p class="forecast-meta">
+              {{ forecast.method | titlecase }} · RMSE {{ forecast.accuracy.rmse !== undefined ? format(forecast.accuracy.rmse) : 'N/A' }}
+            </p>
+          }
+        </section>
+      }
       <label class="field">
         X Axis / Category Column
         <select [(ngModel)]="chart.dimension" (ngModelChange)="refreshChart()">
@@ -341,10 +442,72 @@
       </div> -->
 
       <button class="primary wide" (click)="applyRecommendation()">Recommend Chart</button>
+      @if (selectedTab === 'chart' && analytics.hasRecommendations()) {
+        <section class="recommendations-box" aria-labelledby="recommendations-heading">
+          <div class="recommendations-heading">
+            <h3 id="recommendations-heading">Smart recommendations</h3>
+            <span>Top matches</span>
+          </div>
+          @for (recommendation of analytics.recommendations(); track recommendation.chartType) {
+            <article class="recommendation-item">
+              <div>
+                <strong>{{ recommendation.chartType | titlecase }}</strong>
+                <span class="recommendation-confidence">{{ recommendation.confidence }}%</span>
+              </div>
+              <p>{{ recommendation.reasoning }}</p>
+              <button type="button" (click)="applyRecommendation(recommendation)">Apply</button>
+            </article>
+          }
+        </section>
+      }
       <button class="wide" (click)="saveChart()" [disabled]="!chartData.length">Save Chart</button>
     </aside>
   </section>
 </main>
+
+@if (qualityDetailsOpen) {
+  <div class="quality-backdrop" role="presentation" (click)="toggleQualityDetails()">
+    <section
+      class="quality-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="quality-dialog-heading"
+      (click)="$event.stopPropagation()"
+    >
+      <header>
+        <div>
+          <p class="eyebrow">Dataset health</p>
+          <h2 id="quality-dialog-heading">Quality score: {{ analytics.qualityScore()?.overall ?? qualityScore }}%</h2>
+        </div>
+        <button type="button" aria-label="Close quality details" (click)="toggleQualityDetails()">Close</button>
+      </header>
+      <div class="quality-breakdown">
+        @for (item of [
+          { label: 'Completeness', value: qualityBreakdown().completeness },
+          { label: 'Consistency', value: qualityBreakdown().consistency },
+          { label: 'Accuracy', value: qualityBreakdown().accuracy },
+          { label: 'Uniqueness', value: qualityBreakdown().uniqueness }
+        ]; track item.label) {
+          <div>
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}%</strong>
+            <progress max="100" [value]="item.value">{{ item.value }}%</progress>
+          </div>
+        }
+      </div>
+      @if (qualityIssues().length) {
+        <div class="quality-issues">
+          <h3>Priority issues</h3>
+          @for (issue of qualityIssues(); track issue) {
+            <p>{{ issue }}</p>
+          }
+        </div>
+      } @else {
+        <p class="quality-good">No priority quality issues detected.</p>
+      }
+    </section>
+  </div>
+}
 
 <ng-template #chartTemplate let-data="data" let-def="def">
   <svg class="chart-svg" viewBox="0 0 1120 390" role="img" [attr.aria-label]="def.title">
@@ -388,6 +551,44 @@
         <circle [attr.cx]="pointX(i, data)" [attr.cy]="pointY(point.value, data)" r="5" fill="#0f172a" (click)="addFilterFromChart(point, def)">
           <title>{{ point.label }}: {{ format(point.value) }}</title>
         </circle>
+      }
+      @if (forecastData(); as forecast) {
+        @if (forecastApplies(def)) {
+          <line
+            [attr.x1]="forecastPointX(data.length - 1, data, forecast)"
+            y1="60"
+            [attr.x2]="forecastPointX(data.length - 1, data, forecast)"
+            y2="340"
+            stroke="#94a3b8"
+            stroke-width="2"
+            stroke-dasharray="5,5"
+          />
+          <path [attr.d]="confidenceAreaPath(data, forecast, '95')" fill="#bfdbfe" opacity=".35" />
+          <path [attr.d]="confidenceAreaPath(data, forecast, '80')" fill="#93c5fd" opacity=".45" />
+          <path [attr.d]="forecastLinePath(data, forecast)" fill="none" stroke="#2563eb" stroke-width="3" stroke-dasharray="8,4" />
+          @for (point of forecast.predictions; track $index) {
+            <circle
+              [attr.cx]="forecastPointX(data.length + $index, data, forecast)"
+              [attr.cy]="forecastPointY(point.value, data, forecast)"
+              r="4"
+              fill="#2563eb"
+            >
+              <title>
+                {{ point.date | date }}: Forecast {{ format(point.value) }}. 80% CI {{ format(point.lowerBound80) }} to {{ format(point.upperBound80) }}. 95% CI {{ format(point.lowerBound95) }} to {{ format(point.upperBound95) }}.
+              </title>
+            </circle>
+          }
+          <g transform="translate(760, 22)">
+            <line x1="0" y1="0" x2="26" y2="0" stroke="#0f172a" stroke-width="3" />
+            <text x="32" y="4" class="legend">Historical</text>
+            <line x1="0" y1="20" x2="26" y2="20" stroke="#2563eb" stroke-width="3" stroke-dasharray="8,4" />
+            <text x="32" y="24" class="legend">Forecast</text>
+            <rect x="0" y="32" width="26" height="10" fill="#93c5fd" opacity=".45" />
+            <text x="32" y="41" class="legend">80% interval</text>
+            <rect x="0" y="50" width="26" height="10" fill="#bfdbfe" opacity=".35" />
+            <text x="32" y="59" class="legend">95% interval</text>
+          </g>
+        }
       }
     }
 

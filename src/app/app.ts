@@ -1,7 +1,11 @@
 import { CommonModule } from '@angular/common';
-import { Component, computed, signal } from '@angular/core';
+import { Component, computed, signal, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import * as XLSX from 'xlsx';
+import { AnalyticsService } from './services/analytics.service';
+import { Insight } from './models/insight.types';
+import { ChartRecommendation } from './models/recommendation.types';
+import { ForecastResult } from './models/forecast.types';
 
 type Row = Record<string, unknown>;
 type FieldType = 'String' | 'Category' | 'Integer' | 'Decimal' | 'Currency' | 'Percentage' | 'Date' | 'DateTime' | 'Boolean' | 'Identifier';
@@ -94,6 +98,10 @@ const emptyChart = (): ChartDefinition => ({
 export class App {
   readonly Math = Math;
   readonly appName = 'Data Visualization Studio';
+  
+  // Inject AnalyticsService
+  readonly analytics = inject(AnalyticsService);
+  
   workbook?: XLSX.WorkBook;
   workbookSheets: { name: string; rows: number; columns: number }[] = [];
   sourcePath = '';
@@ -107,10 +115,14 @@ export class App {
   savedCharts: ChartDefinition[] = [];
   dashboardItems: DashboardItem[] = [];
   recentProjects: string[] = JSON.parse(localStorage.getItem('dvis-recent') || '[]');
-  selectedTab: 'data' | 'profile' | 'chart' | 'dashboard' | 'export' = 'data';
+  selectedTab: 'data' | 'profile' | 'chart' | 'dashboard' | 'export' | 'insights' = 'data';
   notification = 'Import an Excel or CSV file to begin.';
   busy = false;
   qualityScore = 100;
+  qualityDetailsOpen = false;
+  forecastPeriods = 10;
+  forecastBusy = false;
+  forecastError = '';
   undoStack: Row[][] = [];
   redoStack: Row[][] = [];
   selectedRowLimit = 100;
@@ -139,6 +151,42 @@ export class App {
   readonly measures = computed(() =>
     this.profiles().filter((field) => ['Integer', 'Decimal', 'Currency', 'Percentage'].includes(field.type)),
   );
+
+  readonly canForecast = computed(() => {
+    const dimension = this.profiles().find((field) => field.name === this.chart.dimension);
+    return (dimension?.type === 'Date' || dimension?.type === 'DateTime')
+      && !!this.chart.measure
+      && this.rows().length >= 10;
+  });
+
+  readonly forecastData = computed(() => this.analytics.currentForecast());
+
+  readonly qualityBreakdown = computed(() => {
+    const analyzedQuality = this.analytics.qualityScore();
+    if (analyzedQuality) return analyzedQuality.components;
+
+    const profiles = this.profiles();
+    const cells = Math.max(this.rows().length * Math.max(this.columns().length, 1), 1);
+    const missing = profiles.reduce((sum, profile) => sum + profile.missing, 0);
+    const completeness = Math.max(0, Math.round(100 - (missing / cells) * 100));
+    const uniqueness = this.rows().length
+      ? Math.max(0, Math.round(100 - (this.duplicateCount() / this.rows().length) * 100))
+      : 100;
+    return { completeness, consistency: 100, accuracy: 100, uniqueness };
+  });
+
+  readonly qualityIssues = computed(() => {
+    const analyzedQuality = this.analytics.qualityScore();
+    if (analyzedQuality) return analyzedQuality.suggestions.slice(0, 3).map((suggestion) => suggestion.description);
+
+    const issues = this.profiles()
+      .filter((field) => field.missingPct > 10)
+      .sort((a, b) => b.missingPct - a.missingPct)
+      .map((field) => `Fill missing values in ${field.name} (${field.missingPct}% missing)`);
+    const duplicates = this.duplicateCount();
+    if (duplicates > 0) issues.unshift(`Remove ${duplicates} duplicate row${duplicates === 1 ? '' : 's'}`);
+    return issues.slice(0, 3);
+  });
 
   readonly visibleRows = computed(() => this.rows().slice(0, this.selectedRowLimit));
 
@@ -187,6 +235,98 @@ export class App {
     this.redoStack = [];
     this.setSmartChartDefaults();
     this.autosave();
+    
+    // Trigger analytics analysis
+    this.triggerAnalytics();
+  }
+  
+  /**
+   * Triggers analytics analysis on the current dataset
+   */
+  async triggerAnalytics(): Promise<void> {
+    if (this.rows().length > 0 && this.columns().length > 0) {
+      await this.analytics.analyzeDataset(
+        this.rows(),
+        this.columns(),
+        this.profiles()
+      );
+    }
+  }
+
+  insightTypeLabel(type: Insight['type']): string {
+    const labels: Record<Insight['type'], string> = {
+      correlation: 'Correlation',
+      outlier: 'Outlier',
+      trend: 'Trend',
+      seasonality: 'Seasonality',
+      distribution: 'Distribution',
+      sudden_change: 'Sudden change',
+    };
+    return labels[type];
+  }
+
+  insightConfidenceClass(confidence: number): string {
+    if (confidence > 80) return 'high';
+    if (confidence >= 60) return 'medium';
+    return 'low';
+  }
+  
+  /**
+   * Visualizes an insight by configuring the chart appropriately
+   */
+  visualizeInsight(insight: Insight): void {
+    this.selectedTab = 'chart';
+    
+    const affectedFields = insight.affectedFields;
+    
+    switch (insight.type) {
+      case 'correlation':
+        // Set up scatter plot for correlated fields
+        if (affectedFields.length >= 2) {
+          this.chart.dimension = '';
+          this.chart.measure = affectedFields[0];
+          this.chart.secondMeasure = affectedFields[1];
+          this.chart.type = 'scatter';
+          this.chart.title = `${affectedFields[0]} vs ${affectedFields[1]}`;
+        }
+        break;
+        
+      case 'outlier':
+        // Show the field with outliers
+        if (affectedFields.length >= 1) {
+          this.chart.measure = affectedFields[0];
+          this.chart.dimension = '';
+          this.chart.type = 'histogram';
+          this.chart.title = `Distribution of ${affectedFields[0]}`;
+        }
+        break;
+        
+      case 'trend':
+      case 'seasonality':
+        // Set up line chart for trend/seasonal patterns
+        if (affectedFields.length >= 2) {
+          this.chart.dimension = affectedFields[0]; // Date field
+          this.chart.measure = affectedFields[1]; // Numeric field
+          this.chart.type = 'line';
+          this.chart.title = `${affectedFields[1]} over ${affectedFields[0]}`;
+        }
+        break;
+        
+      case 'sudden_change':
+        // Show the field as a line chart
+        if (affectedFields.length >= 1) {
+          const dateField = this.dimensions().find(d => d.type === 'Date' || d.type === 'DateTime');
+          if (dateField) {
+            this.chart.dimension = dateField.name;
+            this.chart.measure = affectedFields[0];
+            this.chart.type = 'line';
+            this.chart.title = `${affectedFields[0]} - Sudden Change Detected`;
+          }
+        }
+        break;
+    }
+    
+    this.applyRecommendation();
   }
 
   setSmartChartDefaults(): void {
@@ -196,17 +336,73 @@ export class App {
     this.applyRecommendation();
   }
 
-  applyRecommendation(): void {
+  applyRecommendation(recommendation?: ChartRecommendation): void {
+    if (recommendation) {
+      this.chart.type = recommendation.chartType;
+      const config = recommendation.suggestedConfig;
+      if (config.aggregation) this.chart.aggregation = config.aggregation;
+      if (config.sort) this.chart.sort = config.sort;
+      if (config.topN !== undefined) this.chart.topN = config.topN;
+      this.selectedTab = 'chart';
+      this.refreshChart();
+      this.notification = `Applied ${recommendation.chartType} chart recommendation.`;
+      return;
+    }
+
+    const recommendations = this.analytics.getRecommendations(
+      this.chart.dimension || null,
+      this.chart.measure || null,
+      this.chart.secondMeasure || null,
+      this.profiles(),
+      this.rows(),
+    );
+    const bestRecommendation = recommendations[0];
     const dimension = this.profiles().find((field) => field.name === this.chart.dimension);
     const measure = this.profiles().find((field) => field.name === this.chart.measure);
     const secondMeasure = this.profiles().find((field) => field.name === this.chart.secondMeasure);
-    if (dimension?.type.includes('Date') && measure) this.chart.type = 'line';
+    if (bestRecommendation) {
+      this.chart.type = bestRecommendation.chartType;
+      if (bestRecommendation.suggestedConfig.aggregation) this.chart.aggregation = bestRecommendation.suggestedConfig.aggregation;
+      if (bestRecommendation.suggestedConfig.sort) this.chart.sort = bestRecommendation.suggestedConfig.sort;
+    } else if (dimension?.type.includes('Date') && measure) this.chart.type = 'line';
     else if (measure && secondMeasure) this.chart.type = 'scatter';
     else if (dimension && measure && dimension.unique <= 8) this.chart.type = 'donut';
     else if (dimension && measure) this.chart.type = 'bar';
     else if (measure) this.chart.type = 'histogram';
     else this.chart.type = 'kpi';
     this.refreshChart();
+  }
+
+  toggleQualityDetails(): void {
+    this.qualityDetailsOpen = !this.qualityDetailsOpen;
+  }
+
+  async generateForecast(): Promise<void> {
+    if (!this.canForecast() || this.forecastBusy) return;
+
+    this.forecastBusy = true;
+    this.forecastError = '';
+    try {
+      const forecast = await this.analytics.generateForecast(
+        this.chart.dimension,
+        this.chart.measure,
+        this.rows(),
+        Math.min(100, Math.max(1, Math.round(this.forecastPeriods))),
+      );
+      this.forecastPeriods = forecast.predictions.length;
+      this.notification = `Forecast generated using ${forecast.method.replace('_', ' ')}.`;
+    } catch (error) {
+      this.forecastError = error instanceof Error ? error.message : 'Unable to generate a forecast.';
+      this.notification = 'Forecast generation failed.';
+    } finally {
+      this.forecastBusy = false;
+    }
+  }
+
+  forecastApplies(def: ChartDefinition): boolean {
+    return def.type === 'line'
+      && def.dimension === this.chart.dimension
+      && def.measure === this.chart.measure;
   }
 
   refreshChart(): void {
@@ -596,6 +792,41 @@ export class App {
   linePath(data = this.chartData, area = false): string {
     const path = data.map((point, index) => `${index ? 'L' : 'M'} ${this.pointX(index, data)} ${this.pointY(point.value, data)}`).join(' ');
     return area && data.length ? `${path} L ${this.pointX(data.length - 1, data)} 340 L 70 340 Z` : path;
+  }
+
+  forecastPointX(index: number, data: ChartPoint[], forecast: ForecastResult): number {
+    const totalPoints = data.length + forecast.predictions.length;
+    return 70 + index * (980 / Math.max(totalPoints - 1, 1));
+  }
+
+  forecastPointY(value: number, data: ChartPoint[], forecast: ForecastResult): number {
+    const values = [
+      ...data.map((point) => point.value),
+      ...forecast.predictions.flatMap((point) => [point.value, point.lowerBound95, point.upperBound95]),
+    ];
+    const min = Math.min(...values, 0);
+    const max = Math.max(...values, 1);
+    return 330 - ((value - min) / (max - min || 1)) * 260;
+  }
+
+  forecastLinePath(data: ChartPoint[], forecast: ForecastResult): string {
+    return forecast.predictions
+      .map((point, index) => `${index ? 'L' : 'M'} ${this.forecastPointX(data.length + index, data, forecast)} ${this.forecastPointY(point.value, data, forecast)}`)
+      .join(' ');
+  }
+
+  confidenceAreaPath(data: ChartPoint[], forecast: ForecastResult, level: '80' | '95'): string {
+    if (!forecast.predictions.length) return '';
+    const lowerKey = level === '80' ? 'lowerBound80' : 'lowerBound95';
+    const upperKey = level === '80' ? 'upperBound80' : 'upperBound95';
+    const upper = forecast.predictions.map((point, index) =>
+      `${index ? 'L' : 'M'} ${this.forecastPointX(data.length + index, data, forecast)} ${this.forecastPointY(point[upperKey], data, forecast)}`,
+    ).join(' ');
+    const lower = [...forecast.predictions].reverse().map((point, reverseIndex) => {
+      const index = forecast.predictions.length - 1 - reverseIndex;
+      return `L ${this.forecastPointX(data.length + index, data, forecast)} ${this.forecastPointY(point[lowerKey], data, forecast)}`;
+    }).join(' ');
+    return `${upper} ${lower} Z`;
   }
 
   pieSlices(data = this.chartData): { path: string; color: string; label: string; value: number }[] {

@@ -25,7 +25,7 @@ function createWindow() {
   if (!app.isPackaged && process.argv.includes('--dev')) {
     win.loadURL('http://127.0.0.1:4200');
   } else {
-    const htmlPath = path.join(__dirname, 'dist', 'ExcelAnalyser', 'browser', 'index.html');
+    const htmlPath = path.join(__dirname, 'dist', 'DataAnalyzer', 'browser', 'index.html');
     console.log('Loading:', htmlPath);
     win.loadFile(htmlPath);
   }
