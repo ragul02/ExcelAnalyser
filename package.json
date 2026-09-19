@@ -1,6 +1,6 @@
 {
   "name": "data-analyser",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Excel data visualization and analysis application",
   "author": "Southernstore apps",
   "main": "main.js",
@@ -33,6 +33,7 @@
     "@tensorflow/tfjs": "^4.22.0",
     "buffer": "^6.0.3",
     "comlink": "^4.4.2",
+    "onnxruntime-web": "^1.30.0",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0",
     "xlsx": "^0.18.5"

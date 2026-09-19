@@ -3,6 +3,7 @@
 # Compiled output
 /dist
 /dist-electron
+/dist-electron-build
 /tmp
 /out-tsc
 /bazel-out

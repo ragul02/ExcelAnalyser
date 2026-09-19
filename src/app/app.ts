@@ -3,6 +3,8 @@ import { Component, computed, signal, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import * as XLSX from 'xlsx';
 import { AnalyticsService } from './services/analytics.service';
+import { AIQueryService, AIQueryResult } from './services/ai-query.service';
+import { AIInsightsPanelComponent } from './components/ai-insights-panel.component';
 import { Insight } from './models/insight.types';
 import { ChartRecommendation } from './models/recommendation.types';
 import { ForecastResult } from './models/forecast.types';
@@ -91,7 +93,7 @@ const emptyChart = (): ChartDefinition => ({
 
 @Component({
   selector: 'app-root',
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, AIInsightsPanelComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
@@ -99,8 +101,9 @@ export class App {
   readonly Math = Math;
   readonly appName = 'Data Visualization Studio';
   
-  // Inject AnalyticsService
+  // Inject services
   readonly analytics = inject(AnalyticsService);
+  readonly aiQuery = inject(AIQueryService);
   
   workbook?: XLSX.WorkBook;
   workbookSheets: { name: string; rows: number; columns: number }[] = [];
@@ -327,6 +330,50 @@ export class App {
     }
     
     this.applyRecommendation();
+  }
+
+  /**
+   * Handle visualization creation from AI insights
+   */
+  handleAIVisualization(result: AIQueryResult): void {
+    if (!result.visualization) return;
+
+    this.selectedTab = 'chart';
+    
+    const viz = result.visualization;
+    
+    // Reset chart
+    this.chart = emptyChart();
+    
+    // Apply AI recommendations
+    if (viz.dimension) this.chart.dimension = viz.dimension;
+    if (viz.measure) this.chart.measure = viz.measure;
+    if (viz.config?.secondMeasure) this.chart.secondMeasure = viz.config.secondMeasure;
+    
+    // Map AI viz type to app chart type
+    const typeMap: Record<string, ChartType> = {
+      'table': 'kpi', // Map table to KPI for now
+      'line': 'line',
+      'bar': 'bar',
+      'pie': 'donut',
+      'scatter': 'scatter',
+      'kpi': 'kpi'
+    };
+    
+    this.chart.type = typeMap[viz.type] || 'bar';
+    
+    // Generate title from the question/answer
+    const measure = viz.measure || 'data';
+    const dimension = viz.dimension || '';
+    
+    if (dimension) {
+      this.chart.title = `${measure} by ${dimension}`;
+    } else {
+      this.chart.title = `${measure} Analysis`;
+    }
+    
+    this.refreshChart();
+    this.notification = 'Chart created from AI insights';
   }
 
   setSmartChartDefaults(): void {

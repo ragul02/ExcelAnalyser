@@ -864,3 +864,41 @@ dd {
     overflow: visible;
   }
 }
+
+/* AI Insights Layout */
+.insights-layout {
+  display: grid;
+  grid-template-columns: 1fr 450px;
+  gap: 20px;
+  height: 100%;
+  max-height: 100%;
+  padding: 20px;
+  overflow: hidden;
+}
+
+.insights-view {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 10px;
+}
+
+.ai-panel-container {
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  position: sticky;
+  top: 0;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1200px) {
+  .insights-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 500px;
+  }
+  
+  .ai-panel-container {
+    position: static;
+  }
+}

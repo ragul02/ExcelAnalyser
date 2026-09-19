@@ -182,67 +182,79 @@
       }
 
       @if (rows().length && selectedTab === 'insights') {
-        <section class="insights-view" aria-labelledby="insights-heading">
-          <header class="explainer insights-header">
-            <div>
-              <p class="eyebrow">Advanced analytics</p>
-              <h2 id="insights-heading">Insights from your data</h2>
-              <p>
-                Automatically detected patterns, relationships, and unusual values ranked by confidence.
-                Select an insight to explore it as a chart.
-              </p>
-            </div>
-            @if (analytics.isAnalyzing()) {
-              <div class="analyzing-indicator" role="status" aria-live="polite">
-                <span class="spinner" aria-hidden="true"></span>
-                <span>{{ analytics.analysisStage() || 'Analyzing dataset...' }}</span>
+        <div class="insights-layout">
+          <!-- Left: Automatic Insights -->
+          <section class="insights-view" aria-labelledby="insights-heading">
+            <header class="explainer insights-header">
+              <div>
+                <p class="eyebrow">Advanced analytics</p>
+                <h2 id="insights-heading">Auto-detected Insights</h2>
+                <p>
+                  Automatically detected patterns, relationships, and unusual values ranked by confidence.
+                </p>
+              </div>
+              @if (analytics.isAnalyzing()) {
+                <div class="analyzing-indicator" role="status" aria-live="polite">
+                  <span class="spinner" aria-hidden="true"></span>
+                  <span>{{ analytics.analysisStage() || 'Analyzing dataset...' }}</span>
+                </div>
+              }
+            </header>
+
+            @if (analytics.analysisError(); as error) {
+              <div class="insights-state error" role="alert">
+                <strong>Insights are temporarily unavailable.</strong>
+                <span>{{ error }}</span>
+              </div>
+            } @else if (!analytics.isAnalyzing() && analytics.topInsights().length) {
+              <div class="insights-grid">
+                @for (insight of analytics.topInsights(); track insight.id) {
+                  <article class="insight-card" [class]="insightConfidenceClass(insight.confidence)">
+                    <div class="insight-card-header">
+                      <span class="insight-type-badge">{{ insightTypeLabel(insight.type) }}</span>
+                      <span class="confidence-badge" [attr.aria-label]="insight.confidence + '% confidence'">
+                        {{ insight.confidence | number:'1.0-0' }}% confidence
+                      </span>
+                    </div>
+                    <h3>{{ insight.title }}</h3>
+                    <p>{{ insight.description }}</p>
+                    <div class="affected-fields">
+                      @for (field of insight.affectedFields; track field) {
+                        <span>{{ field }}</span>
+                      }
+                    </div>
+                    <div class="insight-actions">
+                      <button type="button" class="primary" (click)="visualizeInsight(insight)">Visualize</button>
+                      <button
+                        type="button"
+                        class="dismiss-button"
+                        (click)="analytics.dismissInsight(insight.id)"
+                        [attr.aria-label]="'Dismiss ' + insight.title"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </article>
+                }
+              </div>
+            } @else if (!analytics.isAnalyzing()) {
+              <div class="insights-state" role="status">
+                <strong>No actionable insights found yet.</strong>
+                <span>Load a dataset with numeric or date fields to discover patterns automatically.</span>
               </div>
             }
-          </header>
+          </section>
 
-          @if (analytics.analysisError(); as error) {
-            <div class="insights-state error" role="alert">
-              <strong>Insights are temporarily unavailable.</strong>
-              <span>{{ error }}</span>
-            </div>
-          } @else if (!analytics.isAnalyzing() && analytics.topInsights().length) {
-            <div class="insights-grid">
-              @for (insight of analytics.topInsights(); track insight.id) {
-                <article class="insight-card" [class]="insightConfidenceClass(insight.confidence)">
-                  <div class="insight-card-header">
-                    <span class="insight-type-badge">{{ insightTypeLabel(insight.type) }}</span>
-                    <span class="confidence-badge" [attr.aria-label]="insight.confidence + '% confidence'">
-                      {{ insight.confidence | number:'1.0-0' }}% confidence
-                    </span>
-                  </div>
-                  <h3>{{ insight.title }}</h3>
-                  <p>{{ insight.description }}</p>
-                  <div class="affected-fields">
-                    @for (field of insight.affectedFields; track field) {
-                      <span>{{ field }}</span>
-                    }
-                  </div>
-                  <div class="insight-actions">
-                    <button type="button" class="primary" (click)="visualizeInsight(insight)">Visualize</button>
-                    <button
-                      type="button"
-                      class="dismiss-button"
-                      (click)="analytics.dismissInsight(insight.id)"
-                      [attr.aria-label]="'Dismiss ' + insight.title"
-                    >
-                      Dismiss
-                    </button>
-                  </div>
-                </article>
-              }
-            </div>
-          } @else if (!analytics.isAnalyzing()) {
-            <div class="insights-state" role="status">
-              <strong>No actionable insights found yet.</strong>
-              <span>Load a dataset with numeric or date fields to discover patterns automatically.</span>
-            </div>
-          }
-        </section>
+          <!-- Right: AI Chat -->
+          <aside class="ai-panel-container">
+            <app-ai-insights-panel
+              [columns]="columns()"
+              [rows]="rows()"
+              [profiles]="profiles()"
+              (createVisualization)="handleAIVisualization($event)"
+            />
+          </aside>
+        </div>
       }
 
       @if (rows().length && selectedTab === 'chart') {
