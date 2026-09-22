@@ -336,19 +336,42 @@ export class App {
    * Handle visualization creation from AI insights
    */
   handleAIVisualization(result: AIQueryResult): void {
-    if (!result.visualization) return;
-
-    this.selectedTab = 'chart';
+    console.log('[Visualization] Received result:', result);
     
+    if (!result.visualization) {
+      console.log('[Visualization] No visualization data in result');
+      this.notification = 'No visualization available for this query';
+      return;
+    }
+
     const viz = result.visualization;
+    console.log('[Visualization] Visualization config:', viz);
+    
+    // Validate that we have the necessary fields
+    if (viz.type !== 'kpi' && viz.type !== 'table' && !viz.measure) {
+      console.error('[Visualization] Missing measure field');
+      this.notification = 'Cannot create chart: missing data field';
+      return;
+    }
     
     // Reset chart
     this.chart = emptyChart();
     
     // Apply AI recommendations
-    if (viz.dimension) this.chart.dimension = viz.dimension;
-    if (viz.measure) this.chart.measure = viz.measure;
-    if (viz.config?.secondMeasure) this.chart.secondMeasure = viz.config.secondMeasure;
+    if (viz.dimension) {
+      this.chart.dimension = viz.dimension;
+      console.log('[Visualization] Set dimension:', viz.dimension);
+    }
+    
+    if (viz.measure) {
+      this.chart.measure = viz.measure;
+      console.log('[Visualization] Set measure:', viz.measure);
+    }
+    
+    if (viz.config?.secondMeasure) {
+      this.chart.secondMeasure = viz.config.secondMeasure;
+      console.log('[Visualization] Set secondMeasure:', viz.config.secondMeasure);
+    }
     
     // Map AI viz type to app chart type
     const typeMap: Record<string, ChartType> = {
@@ -361,6 +384,7 @@ export class App {
     };
     
     this.chart.type = typeMap[viz.type] || 'bar';
+    console.log('[Visualization] Chart type:', this.chart.type);
     
     // Generate title from the question/answer
     const measure = viz.measure || 'data';
@@ -372,8 +396,20 @@ export class App {
       this.chart.title = `${measure} Analysis`;
     }
     
+    // Switch to chart tab
+    this.selectedTab = 'chart';
+    
+    // Refresh chart data
     this.refreshChart();
-    this.notification = 'Chart created from AI insights';
+    
+    console.log('[Visualization] Chart config:', this.chart);
+    console.log('[Visualization] Chart data points:', this.chartData.length);
+    
+    if (this.chartData.length === 0) {
+      this.notification = 'Chart created but no data to display. Check field names.';
+    } else {
+      this.notification = `Chart created with ${this.chartData.length} data points`;
+    }
   }
 
   setSmartChartDefaults(): void {

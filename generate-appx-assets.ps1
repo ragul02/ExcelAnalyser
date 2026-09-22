@@ -40,39 +40,43 @@ try {
 }
 
 try {
-    Write-Host "Generating icon.ico..." -ForegroundColor Cyan
+    Write-Host "Checking icon.ico..." -ForegroundColor Cyan
     $icoPath = Join-Path "src\assets\icon" "icon.ico"
 
-    $iconSize = 256
-    $iconBmp = New-Object System.Drawing.Bitmap $iconSize, $iconSize
-    $g = [System.Drawing.Graphics]::FromImage($iconBmp)
-    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
-    $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-    $g.Clear([System.Drawing.Color]::Transparent)
+    if (Test-Path $icoPath) {
+        Write-Host "Existing icon.ico found. Keeping the current file to avoid overwriting your custom icon." -ForegroundColor Yellow
+    } else {
+        $iconSize = 256
+        $iconBmp = New-Object System.Drawing.Bitmap $iconSize, $iconSize
+        $g = [System.Drawing.Graphics]::FromImage($iconBmp)
+        $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+        $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+        $g.Clear([System.Drawing.Color]::Transparent)
 
-    $ratioX = $iconSize / $srcImage.Width
-    $ratioY = $iconSize / $srcImage.Height
-    $ratio = [Math]::Min($ratioX, $ratioY)
-    $newW = [int]($srcImage.Width * $ratio)
-    $newH = [int]($srcImage.Height * $ratio)
-    $posX = [int](($iconSize - $newW) / 2)
-    $posY = [int](($iconSize - $newH) / 2)
+        $ratioX = $iconSize / $srcImage.Width
+        $ratioY = $iconSize / $srcImage.Height
+        $ratio = [Math]::Min($ratioX, $ratioY)
+        $newW = [int]($srcImage.Width * $ratio)
+        $newH = [int]($srcImage.Height * $ratio)
+        $posX = [int](($iconSize - $newW) / 2)
+        $posY = [int](($iconSize - $newH) / 2)
 
-    $g.DrawImage($srcImage, $posX, $posY, $newW, $newH)
+        $g.DrawImage($srcImage, $posX, $posY, $newW, $newH)
 
-    $iconHandle = $iconBmp.GetHicon()
-    $icon = [System.Drawing.Icon]::FromHandle($iconHandle)
+        $iconHandle = $iconBmp.GetHicon()
+        $icon = [System.Drawing.Icon]::FromHandle($iconHandle)
 
-    $fs = New-Object System.IO.FileStream $icoPath, "Create"
-    $icon.Save($fs)
-    $fs.Close()
+        $fs = New-Object System.IO.FileStream $icoPath, "Create"
+        $icon.Save($fs)
+        $fs.Close()
 
-    $icon.Dispose()
-    $g.Dispose()
-    $iconBmp.Dispose()
+        $icon.Dispose()
+        $g.Dispose()
+        $iconBmp.Dispose()
 
-    Write-Host "Generated: icon.ico (256x256)" -ForegroundColor Green
+        Write-Host "Generated: icon.ico (256x256)" -ForegroundColor Green
+    }
 } catch {
     Write-Error "Failed to generate icon.ico. Error: $_"
 }

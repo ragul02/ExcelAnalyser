@@ -308,39 +308,73 @@ export class AIModelService {
   }
 
   /**
-   * Generate simple embedding (TF-IDF inspired)
+   * Generate simple embedding (improved semantic representation)
    * In production, this would use actual ONNX model
    */
   private simpleEmbedding(tokens: number[], text: string): number[] {
     const embedding = new Array(this.embeddingDim).fill(0);
     
-    // Create semantic representation
-    const words = text.toLowerCase().split(/\s+/);
+    // Create semantic representation with better word relationships
+    const words = text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 0);
     const wordFreq = new Map<string, number>();
     
     words.forEach(word => {
       wordFreq.set(word, (wordFreq.get(word) || 0) + 1);
     });
 
-    // Generate embedding based on word frequencies and positions
+    // Common semantic clusters for business terms
+    const semanticClusters: Record<string, string[]> = {
+      money: ['sales', 'revenue', 'income', 'profit', 'cost', 'expense', 'price', 'amount', 'value', 'total', 'sum'],
+      quantity: ['count', 'number', 'quantity', 'amount', 'volume', 'size'],
+      time: ['date', 'time', 'when', 'year', 'month', 'day', 'period', 'quarter', 'week'],
+      comparison: ['compare', 'versus', 'vs', 'difference', 'more', 'less', 'higher', 'lower', 'better', 'worse'],
+      aggregation: ['total', 'sum', 'average', 'mean', 'count', 'max', 'min', 'aggregate'],
+      people: ['customer', 'client', 'user', 'buyer', 'seller', 'employee', 'person'],
+      items: ['product', 'item', 'sku', 'goods', 'merchandise', 'service'],
+      location: ['region', 'area', 'location', 'territory', 'zone', 'country', 'state', 'city']
+    };
+
+    // Generate embedding based on word frequencies, positions, and semantic clusters
     let index = 0;
     for (const [word, freq] of wordFreq.entries()) {
       const hash = this.hashString(word);
+      
+      // Base positions from word hash
       const positions = [
         hash % this.embeddingDim,
         (hash * 31) % this.embeddingDim,
-        (hash * 37) % this.embeddingDim
+        (hash * 37) % this.embeddingDim,
+        (hash * 41) % this.embeddingDim
       ];
       
+      // Add word frequency contribution
+      const weight = Math.log(1 + freq) / Math.log(1 + words.length);
       positions.forEach(pos => {
-        embedding[pos] += freq / words.length;
+        embedding[pos] += weight;
       });
+
+      // Add semantic cluster contribution
+      for (const [cluster, clusterWords] of Object.entries(semanticClusters)) {
+        if (clusterWords.includes(word)) {
+          const clusterHash = this.hashString(cluster);
+          const clusterPos = clusterHash % this.embeddingDim;
+          embedding[clusterPos] += weight * 0.5; // Cluster gets half weight
+        }
+      }
       
       index++;
-      if (index >= 10) break; // Limit to top words
+      if (index >= 15) break; // Limit to top words
     }
 
-    // Normalize embedding
+    // Add character n-gram features for better substring matching
+    for (let i = 0; i < text.length - 2; i++) {
+      const trigram = text.substring(i, i + 3);
+      const trigramHash = this.hashString(trigram);
+      const pos = trigramHash % this.embeddingDim;
+      embedding[pos] += 0.1; // Small weight for character features
+    }
+
+    // Normalize embedding to unit vector
     const norm = Math.sqrt(embedding.reduce((sum, val) => sum + val * val, 0));
     return embedding.map(val => norm > 0 ? val / norm : 0);
   }

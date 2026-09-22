@@ -112,6 +112,11 @@ export class AIQueryService {
     this.isProcessing.set(true);
 
     try {
+      // Check for greetings or non-data questions
+      if (this.isGreetingOrSmallTalk(question)) {
+        return this.handleGreeting(question, context, startTime);
+      }
+
       // Step 1: Understand the question using AI
       const intent = await this.aiModel.classifyIntent(question);
       console.log('[AI Query] Intent:', intent);
@@ -119,6 +124,11 @@ export class AIQueryService {
       // Step 2: Match question keywords to data fields
       const fieldMatches = await this.matchFieldsToQuestion(question, context);
       console.log('[AI Query] Field matches:', fieldMatches);
+
+      // If no fields matched, provide better error message
+      if (fieldMatches.length === 0 && intent.intent !== 'unknown') {
+        return this.createNoFieldsMatchedResponse(question, context, startTime);
+      }
 
       // Step 3: Determine what analysis to perform
       const analysis = this.determineAnalysis(intent, fieldMatches, context);
@@ -147,7 +157,7 @@ export class AIQueryService {
         answer,
         data: result.data,
         visualization,
-        confidence: intent.confidence,
+        confidence: Math.max(intent.confidence, 0.5), // Boost confidence
         reasoning: result.reasoning,
         executionTime
       };
@@ -174,22 +184,111 @@ export class AIQueryService {
   }
 
   /**
+   * Check if question is a greeting or small talk
+   */
+  private isGreetingOrSmallTalk(question: string): boolean {
+    const greetings = /^(hi|hello|hey|good morning|good afternoon|good evening|greetings|yo|sup|what's up|howdy)[\s!.?]*$/i;
+    const smallTalk = /^(how are you|what's your name|who are you|what can you do|help|thanks|thank you|bye|goodbye)[\s!.?]*$/i;
+    
+    return greetings.test(question.trim()) || smallTalk.test(question.trim());
+  }
+
+  /**
+   * Handle greetings and small talk
+   */
+  private handleGreeting(question: string, context: QueryContext, startTime: number): AIQueryResult {
+    let answer = '';
+    
+    const q = question.toLowerCase().trim();
+    
+    if (/^(hi|hello|hey|good morning|good afternoon|good evening|greetings|yo|sup|howdy)/.test(q)) {
+      answer = `Hello! I can help you analyze your data. You have ${context.rows.length} rows with ${context.columns.length} columns. Try asking questions like "What is the total revenue?" or "Show me trends over time."`;
+    } else if (/what can you do|help/i.test(q)) {
+      answer = `I can help you analyze your data by:\n• Calculating totals, averages, and other statistics\n• Finding trends over time\n• Comparing values across categories\n• Detecting unusual patterns\n• Finding correlations between fields\n\nJust ask a question about your data!`;
+    } else if (/how are you/i.test(q)) {
+      answer = `I'm ready to help you analyze your data! You have ${context.rows.length} rows loaded. What would you like to know?`;
+    } else if (/what's your name|who are you/i.test(q)) {
+      answer = `I'm your AI Data Assistant. I help you understand your data through natural language questions. What would you like to analyze?`;
+    } else if (/thanks|thank you/i.test(q)) {
+      answer = `You're welcome! Feel free to ask more questions about your data.`;
+    } else if (/bye|goodbye/i.test(q)) {
+      answer = `Goodbye! Come back anytime you need help analyzing your data.`;
+    } else {
+      answer = `I'm here to help you analyze your data. Try asking specific questions like "What is the average sales?" or "Show me the top products."`;
+    }
+
+    return {
+      success: true,
+      answer,
+      confidence: 1.0,
+      reasoning: 'Handled greeting/small talk',
+      suggestions: this.generateSuggestions(context),
+      executionTime: performance.now() - startTime
+    };
+  }
+
+  /**
+   * Handle case when no fields matched
+   */
+  private createNoFieldsMatchedResponse(question: string, context: QueryContext, startTime: number): AIQueryResult {
+    const availableFields = context.columns.slice(0, 10).join(', ');
+    
+    return {
+      success: false,
+      answer: `I couldn't find any fields matching your question. Your data has these fields: ${availableFields}${context.columns.length > 10 ? '...' : ''}. Try using the exact field names in your question.`,
+      confidence: 0,
+      reasoning: 'No field matches found',
+      suggestions: this.generateSuggestions(context),
+      executionTime: performance.now() - startTime
+    };
+  }
+
+  /**
    * Match fields in the question to actual data columns using semantic similarity
    */
   private async matchFieldsToQuestion(question: string, context: QueryContext): Promise<FieldMatch[]> {
-    const keywords = this.aiModel.extractKeyPhrases(question);
     const matches: FieldMatch[] = [];
+    const lowerQuestion = question.toLowerCase();
+    const keywords = this.aiModel.extractKeyPhrases(question);
 
-    // Find fields semantically similar to keywords
+    console.log('[AI Query] Matching fields. Keywords:', keywords, 'Columns:', context.columns);
+
+    // Priority 1: Exact and direct substring matching (highest confidence)
+    const directMatches = this.directFieldMatching(question, context);
+    matches.push(...directMatches);
+
+    // Priority 2: Fuzzy matching for each field
     for (const field of context.columns) {
+      const fieldLower = field.toLowerCase();
+      
+      // Skip if already matched directly
+      if (matches.some(m => m.field === field)) continue;
+
+      // Check if any keyword is similar to field name (fuzzy)
       let maxSimilarity = 0;
       
       for (const keyword of keywords) {
-        const similarity = await this.aiModel.calculateSimilarity(keyword, field);
-        maxSimilarity = Math.max(maxSimilarity, similarity);
+        const keywordLower = keyword.toLowerCase();
+        
+        // Partial match - keyword contains field or field contains keyword
+        if (keywordLower.includes(fieldLower) || fieldLower.includes(keywordLower)) {
+          maxSimilarity = Math.max(maxSimilarity, 0.7);
+        }
+        
+        // Edit distance similarity (for typos)
+        const editSimilarity = this.calculateEditDistanceSimilarity(keywordLower, fieldLower);
+        if (editSimilarity > 0.6) {
+          maxSimilarity = Math.max(maxSimilarity, editSimilarity * 0.8);
+        }
       }
 
-      if (maxSimilarity > 0.3) { // Threshold for relevance
+      // Also check semantic similarity (but lower threshold since our embeddings are basic)
+      for (const keyword of keywords) {
+        const similarity = await this.aiModel.calculateSimilarity(keyword, field);
+        maxSimilarity = Math.max(maxSimilarity, similarity * 0.5); // Weight down semantic similarity
+      }
+
+      if (maxSimilarity > 0.15) { // Much lower threshold
         const profile = context.profiles.find(p => p.name === field);
         const type = profile && ['Integer', 'Decimal', 'Currency', 'Percentage'].includes(profile.type)
           ? 'measure'
@@ -199,16 +298,58 @@ export class AIQueryService {
       }
     }
 
-    // Also do direct name matching for common terms
-    const directMatches = this.directFieldMatching(question, context);
-    matches.push(...directMatches);
+    // Remove duplicates (keep highest similarity)
+    const uniqueMatches = new Map<string, FieldMatch>();
+    for (const match of matches) {
+      const existing = uniqueMatches.get(match.field);
+      if (!existing || match.similarity > existing.similarity) {
+        uniqueMatches.set(match.field, match);
+      }
+    }
 
-    // Remove duplicates and sort by similarity
-    const uniqueMatches = Array.from(
-      new Map(matches.map(m => [m.field, m])).values()
-    );
+    const result = Array.from(uniqueMatches.values()).sort((a, b) => b.similarity - a.similarity);
+    
+    console.log('[AI Query] Field matches found:', result.map(m => `${m.field}(${m.similarity.toFixed(2)})`));
+    
+    return result;
+  }
 
-    return uniqueMatches.sort((a, b) => b.similarity - a.similarity);
+  /**
+   * Calculate string similarity using Levenshtein distance
+   */
+  private calculateEditDistanceSimilarity(str1: string, str2: string): number {
+    const len1 = str1.length;
+    const len2 = str2.length;
+    
+    if (len1 === 0) return len2 === 0 ? 1.0 : 0.0;
+    if (len2 === 0) return 0.0;
+
+    const matrix: number[][] = [];
+
+    // Initialize matrix
+    for (let i = 0; i <= len1; i++) {
+      matrix[i] = [i];
+    }
+    for (let j = 0; j <= len2; j++) {
+      matrix[0][j] = j;
+    }
+
+    // Calculate edit distance
+    for (let i = 1; i <= len1; i++) {
+      for (let j = 1; j <= len2; j++) {
+        const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,      // deletion
+          matrix[i][j - 1] + 1,      // insertion
+          matrix[i - 1][j - 1] + cost // substitution
+        );
+      }
+    }
+
+    const maxLen = Math.max(len1, len2);
+    const distance = matrix[len1][len2];
+    
+    return 1.0 - (distance / maxLen);
   }
 
   /**
@@ -218,23 +359,34 @@ export class AIQueryService {
     const matches: FieldMatch[] = [];
     const lowerQuestion = question.toLowerCase();
 
-    // Common synonyms
+    // Expanded synonyms for business terms
     const synonyms: Record<string, string[]> = {
-      sales: ['revenue', 'income', 'earnings'],
-      cost: ['expense', 'spending', 'expenditure'],
-      profit: ['margin', 'earnings', 'net'],
-      customer: ['client', 'buyer', 'account'],
-      product: ['item', 'sku', 'goods'],
-      date: ['time', 'when', 'period'],
-      quantity: ['amount', 'count', 'number'],
-      price: ['cost', 'value', 'rate']
+      sales: ['revenue', 'income', 'earnings', 'receipts', 'proceeds'],
+      cost: ['expense', 'spending', 'expenditure', 'outlay', 'payment'],
+      profit: ['margin', 'earnings', 'net', 'gain', 'return'],
+      customer: ['client', 'buyer', 'account', 'consumer', 'user'],
+      product: ['item', 'sku', 'goods', 'merchandise', 'article'],
+      date: ['time', 'when', 'period', 'timestamp', 'datetime'],
+      quantity: ['amount', 'count', 'number', 'volume', 'total'],
+      price: ['cost', 'value', 'rate', 'amount', 'charge'],
+      name: ['title', 'label', 'description'],
+      status: ['state', 'condition', 'stage'],
+      category: ['type', 'group', 'class', 'segment'],
+      region: ['area', 'location', 'territory', 'zone'],
+      year: ['annual', 'yearly'],
+      month: ['monthly'],
+      day: ['daily', 'date'],
+      total: ['sum', 'aggregate', 'combined'],
+      average: ['mean', 'avg'],
+      percent: ['percentage', 'rate', 'ratio']
     };
 
     for (const field of context.columns) {
       const fieldLower = field.toLowerCase();
       
-      // Direct match
-      if (lowerQuestion.includes(fieldLower)) {
+      // Exact match - highest priority
+      if (lowerQuestion === fieldLower || lowerQuestion.includes(` ${fieldLower} `) || 
+          lowerQuestion.startsWith(fieldLower + ' ') || lowerQuestion.endsWith(' ' + fieldLower)) {
         const profile = context.profiles.find(p => p.name === field);
         const type = profile && ['Integer', 'Decimal', 'Currency', 'Percentage'].includes(profile.type)
           ? 'measure'
@@ -244,8 +396,21 @@ export class AIQueryService {
         continue;
       }
 
-      // Synonym match
+      // Partial match - field name appears anywhere in question
+      if (lowerQuestion.includes(fieldLower)) {
+        const profile = context.profiles.find(p => p.name === field);
+        const type = profile && ['Integer', 'Decimal', 'Currency', 'Percentage'].includes(profile.type)
+          ? 'measure'
+          : 'dimension';
+        
+        matches.push({ field, similarity: 0.9, type });
+        continue;
+      }
+
+      // Synonym matching - bidirectional
+      let synonymMatched = false;
       for (const [canonical, syns] of Object.entries(synonyms)) {
+        // Check if field contains canonical and question contains synonym
         if (fieldLower.includes(canonical)) {
           for (const syn of syns) {
             if (lowerQuestion.includes(syn)) {
@@ -254,10 +419,29 @@ export class AIQueryService {
                 ? 'measure'
                 : 'dimension';
               
-              matches.push({ field, similarity: 0.8, type });
+              matches.push({ field, similarity: 0.75, type });
+              synonymMatched = true;
               break;
             }
           }
+          if (synonymMatched) break;
+        }
+
+        // Check if question contains canonical and field contains synonym
+        if (lowerQuestion.includes(canonical) && !synonymMatched) {
+          for (const syn of syns) {
+            if (fieldLower.includes(syn)) {
+              const profile = context.profiles.find(p => p.name === field);
+              const type = profile && ['Integer', 'Decimal', 'Currency', 'Percentage'].includes(profile.type)
+                ? 'measure'
+                : 'dimension';
+              
+              matches.push({ field, similarity: 0.75, type });
+              synonymMatched = true;
+              break;
+            }
+          }
+          if (synonymMatched) break;
         }
       }
     }
@@ -281,26 +465,88 @@ export class AIQueryService {
     sortBy?: 'asc' | 'desc';
     limit?: number;
   } {
-    const measures = fieldMatches.filter(m => m.type === 'measure').map(m => m.field);
-    const dimensions = fieldMatches.filter(m => m.type === 'dimension').map(m => m.field);
+    let measures = fieldMatches.filter(m => m.type === 'measure').map(m => m.field);
+    let dimensions = fieldMatches.filter(m => m.type === 'dimension').map(m => m.field);
 
-    // If no matches, try to infer from profiles
-    if (measures.length === 0) {
-      const numericField = context.profiles.find(p => 
+    console.log('[AI Query] determineAnalysis - Initial matches:', { measures, dimensions, intent: intent.intent });
+
+    // If no matches at all and it's a meaningful question, be more intelligent about picking fields
+    if (measures.length === 0 && dimensions.length === 0 && intent.confidence > 0) {
+      console.log('[AI Query] No field matches, trying intelligent field selection based on intent');
+      
+      // Try to pick relevant fields based on question intent
+      const questionLower = intent.keywords.join(' ').toLowerCase();
+      
+      // Look for numeric fields that might be relevant
+      const numericFields = context.profiles.filter(p => 
         ['Integer', 'Decimal', 'Currency', 'Percentage'].includes(p.type)
       );
-      if (numericField) measures.push(numericField.name);
-    }
-
-    if (dimensions.length === 0) {
-      const categoricalField = context.profiles.find(p => 
+      
+      // Look for categorical/grouping fields
+      const categoricalFields = context.profiles.filter(p => 
         p.type === 'Category' || p.type === 'String'
       );
-      if (categoricalField) dimensions.push(categoricalField.name);
+
+      // Look for date fields
+      const dateFields = context.profiles.filter(p => 
+        p.type === 'Date' || p.type === 'DateTime'
+      );
+
+      // Pick first numeric field (prioritize fields with common names)
+      const preferredMeasures = ['amount', 'total', 'value', 'count', 'sales', 'revenue', 'price', 'cost'];
+      let measureField = numericFields.find(f => 
+        preferredMeasures.some(pm => f.name.toLowerCase().includes(pm))
+      );
+      if (!measureField && numericFields.length > 0) {
+        measureField = numericFields[0];
+      }
+      if (measureField) measures.push(measureField.name);
+
+      // Pick first categorical field (avoid 'index' or 'id' fields)
+      const avoidDimensions = ['index', 'id', 'row'];
+      let dimensionField = categoricalFields.find(f => 
+        !avoidDimensions.some(ad => f.name.toLowerCase().includes(ad))
+      );
+      if (!dimensionField && categoricalFields.length > 0) {
+        dimensionField = categoricalFields.find(f => 
+          !avoidDimensions.some(ad => f.name.toLowerCase() === ad)
+        ) || categoricalFields[0];
+      }
+      if (dimensionField) dimensions.push(dimensionField.name);
+
+      // For trend questions, prefer date fields
+      if (intent.intent === 'trend' && dateFields.length > 0) {
+        dimensions = [dateFields[0].name];
+      }
+
+      console.log('[AI Query] Intelligent field selection result:', { measures, dimensions });
+    } else if (measures.length === 0) {
+      // Only pick numeric field if we have some field matches
+      const numericField = context.profiles.find(p => 
+        ['Integer', 'Decimal', 'Currency', 'Percentage'].includes(p.type) &&
+        !p.name.toLowerCase().includes('index') &&
+        !p.name.toLowerCase().includes('id')
+      );
+      if (numericField) {
+        measures.push(numericField.name);
+        console.log('[AI Query] Added default measure:', numericField.name);
+      }
+    }
+
+    if (dimensions.length === 0 && measures.length > 0) {
+      const categoricalField = context.profiles.find(p => 
+        (p.type === 'Category' || p.type === 'String') &&
+        !p.name.toLowerCase().includes('index') &&
+        !p.name.toLowerCase().includes('id')
+      );
+      if (categoricalField) {
+        dimensions.push(categoricalField.name);
+        console.log('[AI Query] Added default dimension:', categoricalField.name);
+      }
     }
 
     // Determine operation from keywords
-    const questionLower = intent.keywords.join(' ');
+    const questionLower = intent.keywords.join(' ').toLowerCase();
     let operation: 'sum' | 'avg' | 'count' | 'min' | 'max' = 'sum';
     
     if (/average|avg|mean/.test(questionLower)) operation = 'avg';
@@ -829,23 +1075,42 @@ export class AIQueryService {
    * Recommend appropriate visualization
    */
   private recommendVisualization(analysis: any, result: any): AIQueryResult['visualization'] {
+    console.log('[AI Query] recommendVisualization - analysis:', analysis);
+    
+    const measure = analysis.measures[0];
+    const dimension = analysis.dimensions[0];
+    
+    console.log('[AI Query] recommendVisualization - measure:', measure, 'dimension:', dimension);
+    
     switch (analysis.type) {
       case 'trend':
+        if (!measure || !dimension) {
+          console.warn('[AI Query] Trend visualization missing fields:', { measure, dimension });
+          return { type: 'table' };
+        }
         return {
           type: 'line',
-          dimension: analysis.dimensions[0],
-          measure: analysis.measures[0]
+          dimension: dimension,
+          measure: measure
         };
 
       case 'comparison':
       case 'distribution':
+        if (!measure || !analysis.groupBy) {
+          console.warn('[AI Query] Comparison/distribution visualization missing fields:', { measure, groupBy: analysis.groupBy });
+          return { type: 'table' };
+        }
         return {
           type: 'bar',
           dimension: analysis.groupBy,
-          measure: analysis.measures[0]
+          measure: measure
         };
 
       case 'correlation':
+        if (!analysis.measures[0] || !analysis.measures[1]) {
+          console.warn('[AI Query] Correlation visualization missing measures');
+          return { type: 'table' };
+        }
         return {
           type: 'scatter',
           measure: analysis.measures[0],
@@ -853,14 +1118,29 @@ export class AIQueryService {
         };
 
       case 'aggregate':
-        if (analysis.groupBy) {
+        if (analysis.groupBy && measure) {
           return {
             type: 'bar',
             dimension: analysis.groupBy,
-            measure: analysis.measures[0]
+            measure: measure
           };
         }
-        return { type: 'kpi' };
+        if (measure) {
+          return { 
+            type: 'kpi',
+            measure: measure
+          };
+        }
+        return { type: 'table' };
+
+      case 'summary':
+        if (measure) {
+          return {
+            type: 'kpi',
+            measure: measure
+          };
+        }
+        return { type: 'table' };
 
       default:
         return { type: 'table' };
