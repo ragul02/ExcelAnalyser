@@ -5,10 +5,11 @@ import { AIQueryService, AIQueryResult } from '../services/ai-query.service';
 
 interface ChatMessage {
   id: string;
-  type: 'user' | 'assistant' | 'system';
+  type: 'user' | 'assistant' | 'system' | 'insights';
   content: string;
   timestamp: Date;
   result?: AIQueryResult;
+  insights?: any;
 }
 
 @Component({
@@ -94,6 +95,25 @@ interface ChatMessage {
             <div class="welcome">
               <h4>Ask Questions About Your Data</h4>
               <p>I can help you analyze trends, find patterns, and generate insights.</p>
+              
+              <!-- Generate Insights Button -->
+              @if (hasData()) {
+                <div class="insights-cta">
+                  <button 
+                    type="button"
+                    class="btn-generate-insights" 
+                    (click)="generateProactiveInsights()"
+                    [disabled]="isGeneratingInsights()">
+                    @if (isGeneratingInsights()) {
+                      <span class="spinner">⋯</span> Generating Insights...
+                    } @else {
+                      <span class="icon">💡</span> Generate Business Insights
+                    }
+                  </button>
+                  <p class="insights-description">Get automatic analysis including key findings, risks, opportunities, and recommendations</p>
+                </div>
+              }
+
               <div class="capabilities">
                 <div class="capability">
                   <span>📊</span>
@@ -132,9 +152,181 @@ interface ChatMessage {
           }
 
           @for (message of messages(); track message.id) {
-            <div class="message" [class.user]="message.type === 'user'" [class.assistant]="message.type === 'assistant'" [class.system]="message.type === 'system'">
+            <div class="message" [class.user]="message.type === 'user'" [class.assistant]="message.type === 'assistant'" [class.system]="message.type === 'system'" [class.insights]="message.type === 'insights'">
               <div class="message-content">
-                {{ message.content }}
+                @if (message.type === 'insights' && message.insights) {
+                  <!-- Insights Report -->
+                  <div class="insights-report">
+                    <h4 class="insights-title">
+                      {{ message.content }}
+                      @if (message.insights?.dataQualityScore !== undefined) {
+                        <span class="quality-badge" [class.high]="message.insights.dataQualityScore >= 80" [class.medium]="message.insights.dataQualityScore >= 60 && message.insights.dataQualityScore < 80" [class.low]="message.insights.dataQualityScore < 60">
+                          Data Quality: {{ message.insights.dataQualityScore }}%
+                        </span>
+                      }
+                    </h4>
+                    
+                    <!-- Executive Summary -->
+                    <div class="insight-section executive">
+                      <div class="section-header">
+                        <span class="section-icon">📋</span>
+                        <h5>Executive Summary</h5>
+                      </div>
+                      <p class="summary-text">{{ message.insights.executiveSummary }}</p>
+                    </div>
+
+                    <!-- Key Findings -->
+                    @if (message.insights.keyFindings?.length > 0) {
+                      <div class="insight-section">
+                        <div class="section-header">
+                          <span class="section-icon">🔑</span>
+                          <h5>Key Findings</h5>
+                        </div>
+                        <ul class="insight-list">
+                          @for (finding of message.insights.keyFindings; track finding) {
+                            <li>{{ finding }}</li>
+                          }
+                        </ul>
+                      </div>
+                    }
+
+                    <!-- Risks -->
+                    @if (message.insights.risks?.length > 0) {
+                      <div class="insight-section warning">
+                        <div class="section-header">
+                          <span class="section-icon">⚠️</span>
+                          <h5>Risks</h5>
+                        </div>
+                        <ul class="insight-list">
+                          @for (risk of message.insights.risks; track risk) {
+                            <li>{{ risk }}</li>
+                          }
+                        </ul>
+                      </div>
+                    }
+
+                    <!-- Opportunities -->
+                    @if (message.insights.opportunities?.length > 0) {
+                      <div class="insight-section success">
+                        <div class="section-header">
+                          <span class="section-icon">🎯</span>
+                          <h5>Opportunities</h5>
+                        </div>
+                        <ul class="insight-list">
+                          @for (opportunity of message.insights.opportunities; track opportunity) {
+                            <li>{{ opportunity }}</li>
+                          }
+                        </ul>
+                      </div>
+                    }
+
+                    <!-- Anomalies -->
+                    @if (message.insights.anomalies?.length > 0) {
+                      <div class="insight-section alert">
+                        <div class="section-header">
+                          <span class="section-icon">🚨</span>
+                          <h5>Anomalies</h5>
+                        </div>
+                        <ul class="insight-list">
+                          @for (anomaly of message.insights.anomalies; track $index) {
+                            <li>
+                              @if (isInsightWithSource(anomaly)) {
+                                <div class="insight-with-source">
+                                  <div class="insight-text">{{ anomaly.text }}</div>
+                                  @if (anomaly.sources?.length > 0) {
+                                    <div class="source-info">
+                                      @for (source of anomaly.sources; track source.field) {
+                                        <div class="source-details">
+                                          <span class="source-label">📊 Source:</span>
+                                          <strong>{{ source.field }}</strong>
+                                          @if (source.calculation) {
+                                            <span class="calculation">{{ source.calculation }}</span>
+                                          }
+                                          @if (source.rowIndices && source.rowIndices.length > 0) {
+                                            <span class="row-refs">
+                                              Rows: {{ formatRowIndices(source.rowIndices) }}
+                                            </span>
+                                          }
+                                          @if (source.sampleValues && source.sampleValues.length > 0) {
+                                            <span class="sample-values">
+                                              Sample values: {{ formatSampleValues(source.sampleValues) }}
+                                            </span>
+                                          }
+                                        </div>
+                                      }
+                                      @if (anomaly.confidence) {
+                                        <span class="confidence-tag" [class]="anomaly.confidence">
+                                          {{ anomaly.confidence }} confidence
+                                        </span>
+                                      }
+                                    </div>
+                                  }
+                                </div>
+                              } @else {
+                                {{ anomaly }}
+                              }
+                            </li>
+                          }
+                        </ul>
+                      </div>
+                    }
+
+                    <!-- Suggested Actions -->
+                    @if (message.insights.suggestedActions?.length > 0) {
+                      <div class="insight-section action">
+                        <div class="section-header">
+                          <span class="section-icon">✅</span>
+                          <h5>Suggested Actions</h5>
+                        </div>
+                        <ul class="insight-list">
+                          @for (action of message.insights.suggestedActions; track action) {
+                            <li>{{ action }}</li>
+                          }
+                        </ul>
+                      </div>
+                    }
+
+                    <!-- Department Recommendations -->
+                    @if (message.insights.departmentRecommendations?.length > 0) {
+                      <div class="insight-section">
+                        <div class="section-header">
+                          <span class="section-icon">🏢</span>
+                          <h5>Department Recommendations</h5>
+                        </div>
+                        <div class="dept-recommendations">
+                          @for (rec of message.insights.departmentRecommendations; track rec.department) {
+                            <div class="dept-rec">
+                              <strong>{{ rec.department }}:</strong>
+                              <span>{{ rec.recommendation }}</span>
+                            </div>
+                          }
+                        </div>
+                      </div>
+                    }
+
+                    <!-- Questions to Ask -->
+                    @if (message.insights.questionsToAsk?.length > 0) {
+                      <div class="insight-section">
+                        <div class="section-header">
+                          <span class="section-icon">❓</span>
+                          <h5>Questions You Should Ask</h5>
+                        </div>
+                        <div class="questions-grid">
+                          @for (question of message.insights.questionsToAsk; track question) {
+                            <button 
+                              type="button"
+                              class="question-btn" 
+                              (click)="askQuestion(question)">
+                              {{ question }}
+                            </button>
+                          }
+                        </div>
+                      </div>
+                    }
+                  </div>
+                } @else {
+                  {{ message.content }}
+                }
                 
                 @if (message.result) {
                   <div class="result-section">
@@ -520,6 +712,67 @@ interface ChatMessage {
       font-size: 14px;
     }
 
+    .insights-cta {
+      margin: 24px 0;
+      padding: 20px;
+      background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+      border-radius: 8px;
+      border: 1px solid #bbf7d0;
+    }
+
+    .btn-generate-insights {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      padding: 14px 20px;
+      background: #14532d;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    .btn-generate-insights:hover:not(:disabled) {
+      background: #166534;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+      transform: translateY(-1px);
+    }
+
+    .btn-generate-insights:disabled {
+      background: #94a3b8;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .btn-generate-insights .icon {
+      font-size: 18px;
+    }
+
+    .btn-generate-insights .spinner {
+      font-size: 20px;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    .insights-description {
+      margin: 10px 0 0 0;
+      font-size: 12px;
+      color: #166534;
+      text-align: center;
+      line-height: 1.4;
+    }
+
     .capabilities {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -627,6 +880,280 @@ interface ChatMessage {
       color: #172033;
       border-bottom-left-radius: 3px;
       border: 1px solid #e2e8f0;
+    }
+
+    .message.insights .message-content {
+      background: white;
+      color: #172033;
+      border-radius: 8px;
+      border: 1px solid #d6dee9;
+      padding: 0;
+      max-width: 100%;
+    }
+
+    .insights-report {
+      width: 100%;
+    }
+
+    .insights-title {
+      margin: 0;
+      padding: 16px 18px;
+      background: linear-gradient(135deg, #14532d 0%, #166534 100%);
+      color: white;
+      font-size: 16px;
+      font-weight: 600;
+      border-radius: 8px 8px 0 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .quality-badge {
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .quality-badge.high {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .quality-badge.medium {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .quality-badge.low {
+      background: #fecaca;
+      color: #991b1b;
+    }
+
+    .insight-section {
+      padding: 16px 18px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+
+    .insight-section:last-child {
+      border-bottom: none;
+      border-radius: 0 0 8px 8px;
+    }
+
+    .insight-section.executive {
+      background: #f8fafc;
+    }
+
+    .insight-section.warning {
+      background: #fef3c7;
+      border-left: 4px solid #f59e0b;
+    }
+
+    .insight-section.success {
+      background: #f0fdf4;
+      border-left: 4px solid #22c55e;
+    }
+
+    .insight-section.alert {
+      background: #fef2f2;
+      border-left: 4px solid #ef4444;
+    }
+
+    .insight-section.action {
+      background: #eff6ff;
+      border-left: 4px solid #3b82f6;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .section-icon {
+      font-size: 18px;
+    }
+
+    .section-header h5 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: #172033;
+    }
+
+    .summary-text {
+      margin: 0;
+      color: #475569;
+      line-height: 1.6;
+      font-size: 14px;
+    }
+
+    .insight-list {
+      margin: 0;
+      padding-left: 20px;
+      list-style: disc;
+    }
+
+    .insight-list li {
+      color: #475569;
+      line-height: 1.6;
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+
+    .insight-list li:last-child {
+      margin-bottom: 0;
+    }
+
+    .insight-with-source {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .insight-text {
+      color: #475569;
+      line-height: 1.6;
+    }
+
+    .source-info {
+      padding: 10px 12px;
+      background: rgba(255, 255, 255, 0.6);
+      border-left: 3px solid #3b82f6;
+      border-radius: 4px;
+      font-size: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .source-details {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      color: #64748b;
+    }
+
+    .source-label {
+      font-size: 11px;
+      color: #94a3b8;
+    }
+
+    .source-details strong {
+      color: #14532d;
+      font-weight: 600;
+    }
+
+    .calculation {
+      padding: 2px 6px;
+      background: #f1f5f9;
+      border-radius: 3px;
+      font-size: 11px;
+      color: #475569;
+      font-family: 'Courier New', monospace;
+    }
+
+    .row-refs {
+      padding: 2px 6px;
+      background: #dbeafe;
+      border-radius: 3px;
+      font-size: 11px;
+      color: #1e40af;
+      font-weight: 500;
+    }
+
+    .sample-values {
+      padding: 2px 6px;
+      background: #fef3c7;
+      border-radius: 3px;
+      font-size: 11px;
+      color: #92400e;
+      font-family: 'Courier New', monospace;
+    }
+
+    .confidence-tag {
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      align-self: flex-start;
+    }
+
+    .confidence-tag.high {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .confidence-tag.medium {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .confidence-tag.low {
+      background: #fecaca;
+      color: #991b1b;
+    }
+
+    .dept-recommendations {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .dept-rec {
+      padding: 10px 12px;
+      background: #f8fafc;
+      border-radius: 6px;
+      border: 1px solid #e2e8f0;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .dept-rec strong {
+      color: #14532d;
+      font-weight: 600;
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .dept-rec span {
+      color: #475569;
+    }
+
+    .questions-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 8px;
+    }
+
+    .question-btn {
+      padding: 10px 12px;
+      background: white;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      color: #475569;
+      text-align: left;
+      transition: all 0.15s;
+      font-weight: 500;
+      line-height: 1.4;
+    }
+
+    .question-btn:hover {
+      background: #14532d;
+      border-color: #14532d;
+      color: white;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
     }
 
     .message-time {
@@ -835,6 +1362,7 @@ export class AIInsightsPanelComponent {
   readonly messages = signal<ChatMessage[]>([]);
   readonly currentQuestion = signal('');
   readonly settingsOpen = signal(false);
+  readonly isGeneratingInsights = signal(false);
 
   // Computed
   readonly hasData = computed(() => this.rows().length > 0);
@@ -911,6 +1439,37 @@ export class AIInsightsPanelComponent {
     this.aiQuery.clearHistory();
   }
 
+  async generateProactiveInsights(): Promise<void> {
+    if (!this.hasData() || this.isGeneratingInsights()) return;
+
+    this.isGeneratingInsights.set(true);
+
+    try {
+      const insights = this.aiQuery.generateProactiveInsights({
+        columns: this.columns(),
+        rows: this.rows(),
+        profiles: this.profiles(),
+        sampleData: this.rows().slice(0, 100)
+      });
+
+      // Add insights message
+      this.addMessage({
+        type: 'insights',
+        content: 'Business Intelligence Report',
+        insights
+      });
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Failed to generate insights';
+      this.addMessage({
+        type: 'assistant',
+        content: errorMsg
+      });
+    } finally {
+      this.isGeneratingInsights.set(false);
+    }
+  }
+
   private addMessage(partial: Omit<ChatMessage, 'id' | 'timestamp'>): void {
     const message: ChatMessage = {
       ...partial,
@@ -972,5 +1531,30 @@ export class AIInsightsPanelComponent {
     suggestions.push(`What unusual patterns exist in the data?`);
 
     return suggestions.slice(0, 4);
+  }
+
+  isInsightWithSource(insight: any): boolean {
+    return insight && typeof insight === 'object' && 'text' in insight && 'sources' in insight;
+  }
+
+  formatRowIndices(indices: number[]): string {
+    if (indices.length <= 3) {
+      return indices.map(i => i + 1).join(', ');
+    }
+    return `${indices.slice(0, 3).map(i => i + 1).join(', ')}... (+${indices.length - 3} more)`;
+  }
+
+  formatSampleValues(values: any[]): string {
+    if (values.length <= 3) {
+      return values.map(v => this.formatValue(v)).join(', ');
+    }
+    return `${values.slice(0, 3).map(v => this.formatValue(v)).join(', ')}...`;
+  }
+
+  formatValue(value: any): string {
+    if (typeof value === 'number') {
+      return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    }
+    return String(value);
   }
 }

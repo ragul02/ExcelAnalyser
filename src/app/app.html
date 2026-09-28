@@ -54,6 +54,7 @@
       }
 
       <div class="tabs">
+        <button [class.active]="selectedTab === 'overview'" (click)="selectedTab = 'overview'">Overview</button>
         <button [class.active]="selectedTab === 'data'" (click)="selectedTab = 'data'">Preview</button>
         <button [class.active]="selectedTab === 'profile'" (click)="selectedTab = 'profile'">Profile</button>
         <button [class.active]="selectedTab === 'insights'" (click)="selectedTab = 'insights'">
@@ -104,6 +105,91 @@
             <input type="file" accept=".xlsx,.xls,.csv" (change)="onFileSelected($event)" />
           </label>
         </div>
+      }
+
+      @if (rows().length && selectedTab === 'overview') {
+        <section class="analysis-overview">
+          <header class="overview-hero">
+            <div>
+              <p class="eyebrow">Analysis dashboard</p>
+              <h1>{{ sourcePath }}</h1>
+              <p>{{ activeSheet }} was profiled locally across {{ analysisOverview().sheetCount }} sheet{{ analysisOverview().sheetCount === 1 ? '' : 's' }}.</p>
+            </div>
+            <button type="button" class="quality-ring" (click)="toggleQualityDetails()">
+              <strong>{{ analysisOverview().quality }}%</strong>
+              <span>Quality</span>
+            </button>
+          </header>
+
+          <div class="overview-metrics">
+            <article>
+              <strong>{{ analysisOverview().rowCount | number }}</strong>
+              <span>Rows</span>
+            </article>
+            <article>
+              <strong>{{ analysisOverview().columnCount | number }}</strong>
+              <span>Columns</span>
+            </article>
+            <article>
+              <strong>{{ analysisOverview().missingCells | number }}</strong>
+              <span>Missing cells</span>
+            </article>
+            <article>
+              <strong>{{ analysisOverview().duplicateRows | number }}</strong>
+              <span>Duplicate rows</span>
+            </article>
+            <article>
+              <strong>{{ analysisOverview().completeness }}%</strong>
+              <span>Completeness</span>
+            </article>
+          </div>
+
+          <div class="overview-grid">
+            <article class="overview-card">
+              <h2>Field Mix</h2>
+              <div class="field-mix">
+                <span><b>{{ analysisOverview().typeCounts.numeric }}</b> numeric</span>
+                <span><b>{{ analysisOverview().typeCounts.category }}</b> category</span>
+                <span><b>{{ analysisOverview().typeCounts.date }}</b> date</span>
+                <span><b>{{ analysisOverview().typeCounts.text }}</b> text/id</span>
+              </div>
+            </article>
+
+            <article class="overview-card">
+              <h2>Priority Checks</h2>
+              @if (qualityIssues().length) {
+                @for (issue of qualityIssues(); track issue) {
+                  <p>{{ issue }}</p>
+                }
+              } @else {
+                <p>No priority quality issues detected.</p>
+              }
+            </article>
+
+            <article class="overview-card wide-card">
+              <h2>Columns To Review</h2>
+              @if (priorityFields().length) {
+                <div class="review-fields">
+                  @for (field of priorityFields(); track field.name) {
+                    <button type="button" (click)="selectedTab = 'profile'">
+                      <strong>{{ field.name }}</strong>
+                      <span>{{ field.type }} · {{ field.missingPct }}% missing · {{ field.unique }} unique</span>
+                    </button>
+                  }
+                </div>
+              } @else {
+                <p>Columns look consistent enough for charting and AI insights.</p>
+              }
+            </article>
+          </div>
+
+          <div class="overview-actions">
+            <button type="button" class="primary" (click)="goToAnalysisTab('insights')">Review AI insights</button>
+            <button type="button" (click)="goToAnalysisTab('profile')">Inspect profile</button>
+            <button type="button" (click)="goToAnalysisTab('chart')">Build chart</button>
+            <button type="button" (click)="goToAnalysisTab('dashboard')">Open dashboard</button>
+          </div>
+        </section>
       }
 
       @if (rows().length && selectedTab === 'data') {

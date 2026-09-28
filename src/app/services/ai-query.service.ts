@@ -27,6 +27,31 @@ export interface QueryContext {
   sampleData: Row[];
 }
 
+export interface InsightSource {
+  field: string;
+  sampleValues?: any[];
+  rowIndices?: number[];
+  calculation?: string;
+}
+
+export interface InsightWithSource {
+  text: string;
+  sources: InsightSource[];
+  confidence?: 'high' | 'medium' | 'low';
+}
+
+export interface ProactiveInsightReport {
+  executiveSummary: string;
+  keyFindings: Array<string | InsightWithSource>;
+  risks: Array<string | InsightWithSource>;
+  opportunities: Array<string | InsightWithSource>;
+  anomalies: Array<string | InsightWithSource>;
+  suggestedActions: string[];
+  departmentRecommendations: Array<{ department: string; recommendation: string }>;
+  questionsToAsk: string[];
+  dataQualityScore: number;
+}
+
 interface FieldMatch {
   field: string;
   similarity: number;
@@ -181,6 +206,61 @@ export class AIQueryService {
     } finally {
       this.isProcessing.set(false);
     }
+  }
+
+  generateProactiveInsights(context: QueryContext): ProactiveInsightReport {
+    if (!context.rows.length || !context.columns.length) {
+      return {
+        executiveSummary: 'Load a spreadsheet or CSV file to generate a proactive business brief.',
+        keyFindings: [],
+        risks: [],
+        opportunities: [],
+        anomalies: [],
+        suggestedActions: [],
+        departmentRecommendations: [],
+        questionsToAsk: [],
+        dataQualityScore: 0
+      };
+    }
+
+    const measures = context.profiles.filter(profile => this.isNumericProfile(profile));
+    const dimensions = context.profiles.filter(profile => !this.isNumericProfile(profile));
+    const dateFields = context.profiles.filter(profile => profile.type === 'Date' || profile.type === 'DateTime');
+    const missingCells = context.profiles.reduce((sum, profile) => sum + (profile.missing || 0), 0);
+    const totalCells = Math.max(context.rows.length * context.columns.length, 1);
+    const completeness = Math.round(100 - (missingCells / totalCells) * 100);
+    const duplicateRows = this.countDuplicateRows(context.rows);
+    const firstMeasure = measures[0];
+    const firstDimension = dimensions.find(profile => profile.unique > 1 && profile.unique <= Math.max(50, context.rows.length * 0.5));
+
+    const keyFindings = [
+      `The dataset contains ${context.rows.length.toLocaleString()} rows and ${context.columns.length.toLocaleString()} columns with ${completeness}% completeness.`,
+      ...this.buildMeasureFindings(context, measures),
+      ...this.buildSegmentFindings(context, firstMeasure, firstDimension),
+      ...this.buildTrendFindings(context, firstMeasure, dateFields[0])
+    ].slice(0, 5);
+
+    const risks = this.buildRisks(context, duplicateRows, completeness);
+    const anomalies = this.buildAnomaliesWithSources(context, measures, dimensions);
+    const opportunities = this.buildOpportunities(context, measures, dimensions, dateFields);
+    const suggestedActions = this.buildSuggestedActions(risks, anomalies, opportunities);
+    const departmentRecommendations = this.buildDepartmentRecommendations(context, measures, dimensions);
+    const questionsToAsk = this.buildQuestionsToAsk(measures, dimensions, dateFields);
+    
+    // Calculate data quality score (0-100)
+    const dataQualityScore = this.calculateDataQualityScore(completeness, duplicateRows, context.rows.length, risks.length);
+
+    return {
+      executiveSummary: this.buildExecutiveSummary(context, completeness, risks.length, anomalies.length),
+      keyFindings,
+      risks,
+      opportunities,
+      anomalies,
+      suggestedActions,
+      departmentRecommendations,
+      questionsToAsk,
+      dataQualityScore
+    };
   }
 
   /**
@@ -1187,6 +1267,541 @@ export class AIQueryService {
   }
 
   // ========== Helper Methods ==========
+
+  private buildExecutiveSummary(context: QueryContext, completeness: number, riskCount: number, anomalyCount: number): string {
+    const quality = completeness >= 90 ? 'high-quality' : completeness >= 70 ? 'usable' : 'requires attention';
+    const measures = context.profiles.filter(p => this.isNumericProfile(p));
+    const dimensions = context.profiles.filter(p => !this.isNumericProfile(p));
+    
+    let summary = `This dataset contains ${context.rows.length.toLocaleString()} records with ${context.columns.length} fields and is ${quality} (${completeness}% complete). `;
+    
+    if (measures.length > 0 && dimensions.length > 0) {
+      summary += `It includes ${measures.length} numeric metric${measures.length === 1 ? '' : 's'} and ${dimensions.length} categorical dimension${dimensions.length === 1 ? '' : 's'} suitable for business analysis. `;
+    }
+    
+    if (riskCount > 0) {
+      summary += `${riskCount} data quality issue${riskCount === 1 ? '' : 's'} detected that should be addressed. `;
+    }
+    
+    if (anomalyCount > 0) {
+      summary += `${anomalyCount} anomal${anomalyCount === 1 ? 'y' : 'ies'} identified requiring management review.`;
+    } else if (riskCount === 0) {
+      summary += `Data quality is good and ready for executive reporting.`;
+    }
+    
+    return summary;
+  }
+
+  private buildMeasureFindings(context: QueryContext, measures: any[]): string[] {
+    const findings: string[] = [];
+    
+    for (const measure of measures.slice(0, 3)) {
+      const values = this.numericValues(context.rows, measure.name);
+      if (!values.length) continue;
+      
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const avg = this.aggregate(values, 'avg');
+      const total = this.aggregate(values, 'sum');
+      
+      // More business-focused description
+      if (measure.type === 'Currency') {
+        findings.push(`${measure.name} totals ${this.formatNumber(total)} across all records, averaging ${this.formatNumber(avg)} per entry (range: ${this.formatNumber(min)} - ${this.formatNumber(max)}).`);
+      } else if (measure.type === 'Percentage') {
+        findings.push(`${measure.name} averages ${avg.toFixed(1)}% with values ranging from ${min.toFixed(1)}% to ${max.toFixed(1)}%.`);
+      } else {
+        findings.push(`${measure.name} shows a total of ${this.formatNumber(total)} with an average of ${this.formatNumber(avg)} per record (min: ${this.formatNumber(min)}, max: ${this.formatNumber(max)}).`);
+      }
+    }
+    
+    return findings;
+  }
+
+  private buildSegmentFindings(context: QueryContext, measure: any, dimension: any): string[] {
+    if (!measure || !dimension) return [];
+
+    const groups = this.groupNumericValues(context.rows, dimension.name, measure.name);
+    const ranked = Array.from(groups.entries())
+      .map(([label, values]) => ({ label, value: this.aggregate(values, 'sum'), count: values.length }))
+      .filter(item => Number.isFinite(item.value))
+      .sort((a, b) => b.value - a.value);
+
+    if (ranked.length < 2) return [];
+
+    const top = ranked[0];
+    const bottom = ranked[ranked.length - 1];
+    const total = ranked.reduce((sum, item) => sum + item.value, 0);
+    const topPercent = ((top.value / total) * 100).toFixed(1);
+    
+    const findings: string[] = [];
+    
+    // Top performer insight
+    findings.push(`${top.label} leads in ${measure.name} with ${this.formatNumber(top.value)} (${topPercent}% of total), significantly outperforming other ${dimension.name} categories.`);
+    
+    // Performance gap insight
+    if (ranked.length >= 3) {
+      const gap = top.value - bottom.value;
+      const gapPercent = ((gap / bottom.value) * 100).toFixed(0);
+      findings.push(`There's a ${gapPercent}% performance gap between the top and bottom ${dimension.name} categories, indicating potential for optimization.`);
+    }
+    
+    return findings;
+  }
+
+  private buildTrendFindings(context: QueryContext, measure: any, dateField: any): string[] {
+    if (!measure || !dateField) return [];
+
+    const points = context.rows
+      .map(row => ({ date: Date.parse(String(row[dateField.name] ?? '')), value: this.toNumber(row[measure.name]) }))
+      .filter(point => Number.isFinite(point.date) && Number.isFinite(point.value))
+      .sort((a, b) => a.date - b.date);
+
+    if (points.length < 2) return [];
+
+    const findings: string[] = [];
+    const first = points[0].value;
+    const last = points[points.length - 1].value;
+    
+    if (first === 0) return [];
+
+    const change = ((last - first) / Math.abs(first)) * 100;
+    const direction = change >= 0 ? 'increased' : 'decreased';
+    const absChange = Math.abs(change);
+    
+    // Overall trend
+    let trendDescription = '';
+    if (absChange > 20) {
+      trendDescription = `significantly ${direction}`;
+    } else if (absChange > 10) {
+      trendDescription = `moderately ${direction}`;
+    } else if (absChange > 5) {
+      trendDescription = `slightly ${direction}`;
+    } else {
+      trendDescription = 'remained relatively stable';
+    }
+    
+    findings.push(`${measure.name} ${trendDescription} by ${absChange.toFixed(1)}% over the ${dateField.name} range, ${change >= 0 ? 'showing positive growth momentum' : 'indicating a downward trend requiring attention'}.`);
+    
+    // Volatility check
+    if (points.length >= 5) {
+      const values = points.map(p => p.value);
+      const stdev = this.calculateStdDev(values);
+      const avg = this.aggregate(values, 'avg');
+      const volatility = (stdev / avg) * 100;
+      
+      if (volatility > 30) {
+        findings.push(`${measure.name} shows high volatility (${volatility.toFixed(0)}% coefficient of variation), suggesting inconsistent performance or seasonal patterns.`);
+      }
+    }
+    
+    return findings;
+  }
+
+  private buildRisks(context: QueryContext, duplicateRows: number, completeness: number): string[] {
+    const risks: string[] = [];
+    const missingFields = context.profiles
+      .filter(profile => (profile.missingPct || 0) >= 10)
+      .sort((a, b) => (b.missingPct || 0) - (a.missingPct || 0))
+      .slice(0, 3);
+
+    missingFields.forEach(field => {
+      const severity = field.missingPct >= 30 ? 'critical data quality issue' : 'data completeness concern';
+      risks.push(`${field.name} has ${field.missingPct?.toFixed(1)}% missing values—a ${severity} that may skew analysis and lead to incorrect business decisions.`);
+    });
+    
+    if (duplicateRows > 0) {
+      const dupPercent = ((duplicateRows / context.rows.length) * 100).toFixed(1);
+      risks.push(`${duplicateRows.toLocaleString()} duplicate row${duplicateRows === 1 ? '' : 's'} detected (${dupPercent}% of data), which will inflate aggregations and produce misleading totals.`);
+    }
+    
+    if (completeness < 80) {
+      risks.push(`Overall data completeness at ${completeness}% is below acceptable threshold. Executive decisions based on this data should be made with caution.`);
+    }
+
+    const highCardinality = context.profiles.find(profile => profile.unique > Math.max(100, context.rows.length * 0.7));
+    if (highCardinality) {
+      risks.push(`${highCardinality.name} has ${highCardinality.unique} unique values (${((highCardinality.unique / context.rows.length) * 100).toFixed(0)}% of rows), making it unsuitable for grouping or segmentation analysis.`);
+    }
+    
+    // Check for zero or negative values in currency/percentage fields
+    const measures = context.profiles.filter(p => ['Currency', 'Percentage', 'Integer', 'Decimal'].includes(p.type));
+    for (const measure of measures.slice(0, 2)) {
+      const values = this.numericValues(context.rows, measure.name);
+      const negativeCount = values.filter(v => v < 0).length;
+      const zeroCount = values.filter(v => v === 0).length;
+      
+      if (measure.type === 'Currency' && negativeCount > values.length * 0.1) {
+        risks.push(`${measure.name} contains ${negativeCount} negative values (${((negativeCount / values.length) * 100).toFixed(1)}%), which may indicate data entry errors or refunds that need separate handling.`);
+      }
+      
+      if (zeroCount > values.length * 0.2 && values.length > 10) {
+        risks.push(`${measure.name} has ${zeroCount} zero values (${((zeroCount / values.length) * 100).toFixed(1)}%), which could represent incomplete transactions or data collection issues.`);
+      }
+    }
+
+    return risks.slice(0, 6);
+  }
+
+  private buildOpportunities(context: QueryContext, measures: any[], dimensions: any[], dateFields: any[]): string[] {
+    const opportunities: string[] = [];
+    const segment = dimensions.find(profile => profile.unique > 1 && profile.unique <= 25);
+
+    if (measures.length && segment) {
+      opportunities.push(`Segment ${measures[0].name} by ${segment.name} to identify top performers and underperformers. Focus resources on high-potential segments and investigate root causes of low performance.`);
+    }
+
+    if (dateFields.length && measures.length) {
+      opportunities.push(`Leverage ${dateFields[0].name} trends in ${measures[0].name} to build predictive models, forecast future performance, and proactively address declining patterns before they impact business results.`);
+    }
+
+    if (measures.length >= 2) {
+      opportunities.push(`Analyze the relationship between ${measures[0].name} and ${measures[1].name} to identify efficiency drivers, cost optimization opportunities, or pricing improvement strategies.`);
+    }
+
+    if (context.rows.length > 1000) {
+      opportunities.push(`Dataset size (${context.rows.length.toLocaleString()} records) provides statistical significance for advanced analytics including predictive modeling, customer segmentation, and anomaly detection.`);
+    }
+    
+    // Look for categorical dimensions suitable for comparative analysis
+    const goodDimensions = dimensions.filter(d => d.unique >= 2 && d.unique <= 20);
+    if (goodDimensions.length >= 2 && measures.length > 0) {
+      opportunities.push(`Cross-reference ${goodDimensions[0].name} with ${goodDimensions[1].name} to discover hidden segment performance patterns and target specific customer or product combinations.`);
+    }
+    
+    // Check for date range to suggest period-over-period analysis
+    if (dateFields.length > 0) {
+      const dates = context.rows
+        .map(row => Date.parse(String(row[dateFields[0].name] ?? '')))
+        .filter(d => Number.isFinite(d));
+      
+      if (dates.length > 0) {
+        const daysDiff = (Math.max(...dates) - Math.min(...dates)) / (1000 * 60 * 60 * 24);
+        if (daysDiff > 60) {
+          opportunities.push(`Data spans ${Math.floor(daysDiff)} days, enabling month-over-month or quarter-over-quarter comparisons to track performance cycles and seasonal patterns.`);
+        }
+      }
+    }
+
+    return opportunities.slice(0, 6);
+  }
+
+  private buildAnomalies(context: QueryContext, measures: any[], dimensions: any[]): string[] {
+    const anomalies: string[] = [];
+
+    for (const measure of measures.slice(0, 4)) {
+      const values = this.numericValues(context.rows, measure.name);
+      if (values.length < 10) continue;
+
+      const mean = this.aggregate(values, 'avg');
+      const stdev = this.calculateStdDev(values);
+      if (!stdev) continue;
+
+      const outliers = values.filter(value => Math.abs((value - mean) / stdev) > 2.5);
+      if (outliers.length) {
+        const severityLevel = outliers.length > values.length * 0.05 ? 'significant number of' : '';
+        const maxOutlier = Math.max(...outliers.map(v => Math.abs(v - mean)));
+        anomalies.push(`${measure.name} contains ${severityLevel ? severityLevel + ' ' : ''}${outliers.length} extreme value${outliers.length === 1 ? '' : 's'} (${((outliers.length / values.length) * 100).toFixed(1)}% of data) deviating more than 2.5 standard deviations from the mean, with maximum deviation of ${this.formatNumber(maxOutlier)}.`);
+      }
+    }
+
+    for (const dimension of dimensions.slice(0, 3)) {
+      const top = dimension.topValues?.[0];
+      if (top && context.rows.length && top.count / context.rows.length > 0.6) {
+        anomalies.push(`${dimension.name} is heavily skewed: "${top.value}" represents ${Math.round((top.count / context.rows.length) * 100)}% of all records, which limits the effectiveness of comparative analysis across this dimension.`);
+      }
+    }
+    
+    // Check for unusual patterns in date sequences if available
+    const dateFields = context.profiles.filter(p => p.type === 'Date' || p.type === 'DateTime');
+    if (dateFields.length > 0) {
+      const dates = context.rows
+        .map(row => Date.parse(String(row[dateFields[0].name] ?? '')))
+        .filter(d => Number.isFinite(d))
+        .sort((a, b) => a - b);
+      
+      if (dates.length > 5) {
+        // Check for gaps
+        const gaps: number[] = [];
+        for (let i = 1; i < dates.length; i++) {
+          gaps.push(dates[i] - dates[i - 1]);
+        }
+        const avgGap = this.aggregate(gaps, 'avg');
+        const maxGap = Math.max(...gaps);
+        
+        if (maxGap > avgGap * 10) {
+          const gapDays = Math.floor(maxGap / (1000 * 60 * 60 * 24));
+          anomalies.push(`${dateFields[0].name} shows an unusual ${gapDays}-day gap in the timeline, which may indicate missing data periods or business disruptions.`);
+        }
+      }
+    }
+
+    return anomalies.slice(0, 6);
+  }
+
+  private buildAnomaliesWithSources(context: QueryContext, measures: any[], dimensions: any[]): Array<string | InsightWithSource> {
+    const anomalies: Array<string | InsightWithSource> = [];
+
+    for (const measure of measures.slice(0, 4)) {
+      const valuesWithIndices = context.rows
+        .map((r, i) => ({ value: this.toNumber(r[measure.name]), index: i }))
+        .filter(v => Number.isFinite(v.value));
+      
+      if (valuesWithIndices.length < 10) continue;
+
+      const values = valuesWithIndices.map(v => v.value);
+      const mean = this.aggregate(values, 'avg');
+      const stdev = this.calculateStdDev(values);
+      if (!stdev) continue;
+
+      const outlierData = valuesWithIndices
+        .filter(v => Math.abs((v.value - mean) / stdev) > 2.5)
+        .sort((a, b) => Math.abs((b.value - mean) / stdev) - Math.abs((a.value - mean) / stdev));
+      
+      if (outlierData.length) {
+        const severityLevel = outlierData.length > values.length * 0.05 ? 'significant number of' : '';
+        const maxOutlier = Math.max(...outlierData.map(v => Math.abs(v.value - mean)));
+        const topOutliers = outlierData.slice(0, 5);
+        
+        anomalies.push({
+          text: `${measure.name} contains ${severityLevel ? severityLevel + ' ' : ''}${outlierData.length} extreme value${outlierData.length === 1 ? '' : 's'} (${((outlierData.length / values.length) * 100).toFixed(1)}% of data) deviating more than 2.5 standard deviations from the mean, with maximum deviation of ${this.formatNumber(maxOutlier)}.`,
+          sources: [{
+            field: measure.name,
+            sampleValues: topOutliers.map(o => o.value),
+            rowIndices: topOutliers.map(o => o.index),
+            calculation: `Mean: ${this.formatNumber(mean)}, Std Dev: ${this.formatNumber(stdev)}`
+          }],
+          confidence: 'high'
+        });
+      }
+    }
+
+    for (const dimension of dimensions.slice(0, 3)) {
+      const top = dimension.topValues?.[0];
+      if (top && context.rows.length && top.count / context.rows.length > 0.6) {
+        // Find sample row indices for this dominant value
+        const sampleIndices = context.rows
+          .map((r, i) => ({ value: r[dimension.name], index: i }))
+          .filter(item => item.value === top.value)
+          .slice(0, 5)
+          .map(item => item.index);
+        
+        anomalies.push({
+          text: `${dimension.name} is heavily skewed: "${top.value}" represents ${Math.round((top.count / context.rows.length) * 100)}% of all records, which limits the effectiveness of comparative analysis across this dimension.`,
+          sources: [{
+            field: dimension.name,
+            sampleValues: [top.value],
+            rowIndices: sampleIndices,
+            calculation: `${top.count} out of ${context.rows.length} rows`
+          }],
+          confidence: 'high'
+        });
+      }
+    }
+    
+    // Check for unusual patterns in date sequences if available
+    const dateFields = context.profiles.filter(p => p.type === 'Date' || p.type === 'DateTime');
+    if (dateFields.length > 0) {
+      const datesWithIndices = context.rows
+        .map((row, i) => ({ date: Date.parse(String(row[dateFields[0].name] ?? '')), index: i }))
+        .filter(d => Number.isFinite(d.date))
+        .sort((a, b) => a.date - b.date);
+      
+      if (datesWithIndices.length > 5) {
+        // Check for gaps
+        let maxGap = 0;
+        let gapStartIndex = 0;
+        let gapEndIndex = 0;
+        let avgGap = 0;
+        
+        const gaps: number[] = [];
+        for (let i = 1; i < datesWithIndices.length; i++) {
+          const gap = datesWithIndices[i].date - datesWithIndices[i - 1].date;
+          gaps.push(gap);
+          if (gap > maxGap) {
+            maxGap = gap;
+            gapStartIndex = datesWithIndices[i - 1].index;
+            gapEndIndex = datesWithIndices[i].index;
+          }
+        }
+        avgGap = this.aggregate(gaps, 'avg');
+        
+        if (maxGap > avgGap * 10) {
+          const gapDays = Math.floor(maxGap / (1000 * 60 * 60 * 24));
+          anomalies.push({
+            text: `${dateFields[0].name} shows an unusual ${gapDays}-day gap in the timeline, which may indicate missing data periods or business disruptions.`,
+            sources: [{
+              field: dateFields[0].name,
+              rowIndices: [gapStartIndex, gapEndIndex],
+              calculation: `Gap between row ${gapStartIndex + 1} and row ${gapEndIndex + 1}`
+            }],
+            confidence: 'medium'
+          });
+        }
+      }
+    }
+
+    return anomalies.slice(0, 6);
+  }
+
+  private buildSuggestedActions(risks: Array<string | InsightWithSource>, anomalies: Array<string | InsightWithSource>, opportunities: string[]): string[] {
+    const actions: string[] = [];
+    
+    if (risks.length > 0) {
+      actions.push('Address data quality issues immediately: remove duplicates, handle missing values, and validate data accuracy before sharing reports with stakeholders.');
+    }
+    
+    if (anomalies.length > 0) {
+      actions.push('Investigate anomalies with subject matter experts to determine if they represent data errors, exceptional circumstances, or legitimate business events requiring separate analysis.');
+    }
+    
+    if (opportunities.length > 0) {
+      actions.push('Create executive dashboards focusing on the highest-opportunity areas identified, with drill-down capabilities for detailed investigation.');
+    }
+    
+    // More specific actions based on data characteristics
+    actions.push('Schedule a data review meeting with key stakeholders to validate assumptions and ensure all parties understand the analysis limitations and insights.');
+    
+    actions.push('Document data quality metrics and establish a baseline for ongoing monitoring. Set up automated alerts for significant deviations from expected patterns.');
+    
+    if (risks.length === 0 && anomalies.length === 0) {
+      actions.push('Data quality is excellent—proceed with confidence to advanced analytics, predictive modeling, and executive reporting.');
+    }
+    
+    return actions.slice(0, 6);
+  }
+
+  private buildDepartmentRecommendations(context: QueryContext, measures: any[], dimensions: any[]): Array<{ department: string; recommendation: string }> {
+    const text = context.columns.join(' ').toLowerCase();
+    const primaryMeasure = measures[0]?.name || 'key metrics';
+    const primaryDimension = dimensions[0]?.name || 'categories';
+    const recommendations: Array<{ department: string; recommendation: string }> = [];
+
+    if (/sales|revenue|customer|region|product|order|deal|quota/.test(text)) {
+      recommendations.push({ 
+        department: 'Sales', 
+        recommendation: `Analyze ${primaryMeasure} performance by ${primaryDimension} to identify top-performing reps/regions and create targeted coaching plans for underperformers. Focus on win rates and deal velocity improvements.` 
+      });
+    }
+    
+    if (/cost|expense|profit|margin|invoice|payment|amount|budget|accounting/.test(text)) {
+      recommendations.push({ 
+        department: 'Finance', 
+        recommendation: `Conduct variance analysis on ${primaryMeasure} to identify cost overruns and margin compression. Investigate outliers before finalizing financial reports and establish tighter budget controls for high-variance categories.` 
+      });
+    }
+    
+    if (/inventory|stock|supplier|vendor|sku|delivery|quantity|warehouse|logistics/.test(text)) {
+      recommendations.push({ 
+        department: 'Operations', 
+        recommendation: `Optimize inventory levels by analyzing ${primaryMeasure} patterns across ${primaryDimension}. Identify slow-moving items for clearance and fast-moving items requiring increased stock levels to prevent stockouts.` 
+      });
+    }
+    
+    if (/employee|salary|attendance|department|hire|attrition|turnover|headcount/.test(text)) {
+      recommendations.push({ 
+        department: 'HR', 
+        recommendation: `Review ${primaryMeasure} trends by ${primaryDimension} to identify departments with high attrition risk. Investigate compensation equity issues and develop retention strategies for high-value employee segments.` 
+      });
+    }
+    
+    if (/campaign|lead|channel|conversion|click|impression|engagement|ctr/.test(text)) {
+      recommendations.push({ 
+        department: 'Marketing', 
+        recommendation: `Calculate ROI for each campaign by comparing ${primaryMeasure} against spend. Reallocate budget from low-performing channels to high-conversion channels and test new messaging for underperforming segments.` 
+      });
+    }
+    
+    if (/customer|client|retention|churn|satisfaction|nps|support|ticket/.test(text)) {
+      recommendations.push({ 
+        department: 'Customer Success', 
+        recommendation: `Segment customers by ${primaryDimension} and ${primaryMeasure} to identify at-risk accounts. Proactively reach out to customers showing declining engagement or satisfaction scores before churn occurs.` 
+      });
+    }
+
+    if (recommendations.length === 0) {
+      recommendations.push(
+        { 
+          department: 'Executive Leadership', 
+          recommendation: `Use ${primaryDimension} and ${primaryMeasure} as foundation for KPI dashboard. Establish targets, track progress weekly, and hold department heads accountable for performance against benchmarks.` 
+        },
+        { 
+          department: 'Data Analytics', 
+          recommendation: `Create standardized data collection procedures and validation rules to improve data quality. Build automated reports for recurring analysis needs and establish a data governance framework.` 
+        }
+      );
+    }
+
+    return recommendations.slice(0, 6);
+  }
+
+  private buildQuestionsToAsk(measures: any[], dimensions: any[], dateFields: any[]): string[] {
+    const measure = measures[0]?.name || 'value';
+    const secondMeasure = measures[1]?.name;
+    const dimension = dimensions[0]?.name || 'category';
+    const dateField = dateFields[0]?.name;
+    const questions: string[] = [
+      `What are the top 5 ${dimension} by ${measure}?`,
+      `Which ${dimension} categories are underperforming and why?`,
+      `Show me all records with unusual ${measure} values`,
+      `What percentage of total ${measure} comes from each ${dimension}?`
+    ];
+
+    if (dateField) {
+      questions.splice(2, 0, `How has ${measure} trended over ${dateField} in the last period?`);
+      questions.push(`What is the month-over-month growth rate for ${measure}?`);
+    }
+    
+    if (secondMeasure) {
+      questions.push(`What is the correlation between ${measure} and ${secondMeasure}?`);
+      questions.push(`Calculate the ratio of ${measure} to ${secondMeasure}`);
+    }
+    
+    if (measures.length > 0) {
+      questions.push(`What is the average ${measure} by ${dimension}?`);
+    }
+
+    return questions.slice(0, 8);
+  }
+
+  private isNumericProfile(profile: any): boolean {
+    return ['Integer', 'Decimal', 'Currency', 'Percentage'].includes(profile.type);
+  }
+
+  private numericValues(rows: Row[], field: string): number[] {
+    return rows.map(row => this.toNumber(row[field])).filter(Number.isFinite);
+  }
+
+  private groupNumericValues(rows: Row[], dimension: string, measure: string): Map<string, number[]> {
+    const groups = new Map<string, number[]>();
+
+    for (const row of rows) {
+      const key = String(row[dimension] ?? '(blank)') || '(blank)';
+      const value = this.toNumber(row[measure]);
+      if (!Number.isFinite(value)) continue;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(value);
+    }
+
+    return groups;
+  }
+
+  private countDuplicateRows(rows: Row[]): number {
+    return rows.length - new Set(rows.map(row => JSON.stringify(row))).size;
+  }
+
+  private calculateDataQualityScore(completeness: number, duplicateRows: number, totalRows: number, riskCount: number): number {
+    let score = completeness; // Start with completeness (0-100)
+    
+    // Deduct for duplicates
+    const duplicatePercent = (duplicateRows / totalRows) * 100;
+    score -= duplicatePercent * 0.5; // Each % of duplicates reduces score by 0.5
+    
+    // Deduct for risks
+    score -= riskCount * 5; // Each risk reduces score by 5 points
+    
+    // Clamp between 0-100
+    return Math.max(0, Math.min(100, Math.round(score)));
+  }
 
   private toNumber(value: unknown): number {
     if (typeof value === 'number') return value;

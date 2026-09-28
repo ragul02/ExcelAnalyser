@@ -270,6 +270,7 @@ select {
 .data-view,
 .chart-shell,
 .dashboard,
+.analysis-overview,
 .export-panel article {
   background: #fff;
   border: 1px solid #d6dee9;
@@ -279,6 +280,124 @@ select {
 
 .data-view {
   padding: 12px;
+}
+
+.analysis-overview {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.overview-hero,
+.overview-actions,
+.review-fields {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.overview-hero {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.overview-hero h1 {
+  margin-top: 4px;
+  font-size: 22px;
+  overflow-wrap: anywhere;
+}
+
+.overview-hero p,
+.overview-card p {
+  margin-top: 6px;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.quality-ring {
+  min-width: 104px;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #14532d;
+}
+
+.quality-ring strong {
+  font-size: 24px;
+}
+
+.quality-ring span {
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.overview-metrics,
+.overview-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.overview-metrics {
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+}
+
+.overview-metrics article,
+.overview-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #d6dee9;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.overview-metrics strong {
+  display: block;
+  color: #172033;
+  font-size: 20px;
+}
+
+.overview-metrics span,
+.field-mix span,
+.review-fields span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.overview-grid {
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+}
+
+.wide-card {
+  grid-column: 1 / -1;
+}
+
+.field-mix {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(90px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.field-mix span {
+  padding: 9px;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.field-mix b {
+  display: block;
+  color: #172033;
+  font-size: 18px;
+}
+
+.review-fields button {
+  min-width: 210px;
+  display: grid;
+  gap: 4px;
+  text-align: left;
 }
 
 .table-wrap {

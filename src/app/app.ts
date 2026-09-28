@@ -118,7 +118,7 @@ export class App {
   savedCharts: ChartDefinition[] = [];
   dashboardItems: DashboardItem[] = [];
   recentProjects: string[] = JSON.parse(localStorage.getItem('dvis-recent') || '[]');
-  selectedTab: 'data' | 'profile' | 'chart' | 'dashboard' | 'export' | 'insights' = 'data';
+  selectedTab: 'overview' | 'data' | 'profile' | 'chart' | 'dashboard' | 'export' | 'insights' = 'data';
   notification = 'Import an Excel or CSV file to begin.';
   busy = false;
   qualityScore = 100;
@@ -191,6 +191,40 @@ export class App {
     return issues.slice(0, 3);
   });
 
+  readonly analysisOverview = computed(() => {
+    const profiles = this.profiles();
+    const rowCount = this.rows().length;
+    const columnCount = this.columns().length;
+    const missingCells = profiles.reduce((sum, profile) => sum + profile.missing, 0);
+    const duplicateRows = this.duplicateCount();
+    const typeCounts = profiles.reduce((counts, profile) => {
+      if (['Integer', 'Decimal', 'Currency', 'Percentage'].includes(profile.type)) counts.numeric++;
+      else if (['Date', 'DateTime'].includes(profile.type)) counts.date++;
+      else if (profile.type === 'Category') counts.category++;
+      else counts.text++;
+      return counts;
+    }, { numeric: 0, category: 0, date: 0, text: 0 });
+    const quality = this.analytics.qualityScore()?.overall ?? this.qualityScore;
+
+    return {
+      rowCount,
+      columnCount,
+      sheetCount: this.workbookSheets.length,
+      missingCells,
+      duplicateRows,
+      quality,
+      completeness: rowCount * columnCount ? Math.round(100 - (missingCells / (rowCount * columnCount)) * 100) : 100,
+      typeCounts,
+    };
+  });
+
+  readonly priorityFields = computed(() =>
+    this.profiles()
+      .filter((profile) => profile.missing > 0 || profile.unique <= Math.max(1, this.rows().length * 0.02))
+      .sort((a, b) => b.missingPct - a.missingPct || a.unique - b.unique)
+      .slice(0, 6),
+  );
+
   readonly visibleRows = computed(() => this.rows().slice(0, this.selectedRowLimit));
 
   onFileSelected(event: Event): void {
@@ -209,6 +243,7 @@ export class App {
           return { name, rows: range.e.r + 1, columns: range.e.c + 1 };
         });
         this.loadSheet(this.workbook.SheetNames[0]);
+        this.selectedTab = 'overview';
         this.notification = `Imported ${file.name}. Select a sheet, profile fields, then build charts.`;
       } catch {
         this.notification = 'This file could not be imported. Supported formats are .xlsx, .xls and .csv.';
@@ -458,6 +493,10 @@ export class App {
 
   toggleQualityDetails(): void {
     this.qualityDetailsOpen = !this.qualityDetailsOpen;
+  }
+
+  goToAnalysisTab(tab: 'profile' | 'insights' | 'chart' | 'dashboard'): void {
+    this.selectedTab = tab;
   }
 
   async generateForecast(): Promise<void> {
