@@ -1,5 +1,4 @@
-import { Service, inject } from '@angular/core';
-import { StatisticsService } from './statistics.service';
+import { Service } from '@angular/core';
 import {
   QualityCategory,
   QualityComponent,
@@ -31,20 +30,19 @@ interface FieldProfile {
  */
 @Service()
 export class QualityAnalyzerService {
-  private readonly statistics = inject(StatisticsService);
   private readonly numericTypes: FieldType[] = ['Integer', 'Decimal', 'Currency', 'Percentage'];
 
   analyzeQuality(rows: Row[], columns: string[], profiles: FieldProfile[]): QualityScore {
     const completeness = this.assessCompleteness(profiles, rows.length);
     const consistency = this.assessConsistency(rows, profiles);
-    const accuracy = this.assessAccuracy(rows, profiles);
+    const validity = this.assessValidity(rows, profiles);
     const uniqueness = this.assessUniqueness(rows, columns, profiles);
-    const components = { completeness, consistency, accuracy, uniqueness };
+    const components = { completeness, consistency, validity, uniqueness };
     const suggestions = this.generateSuggestions(components);
     const overall = Math.round(
       completeness.score * 0.3
       + consistency.score * 0.25
-      + accuracy.score * 0.25
+      + validity.score * 0.25
       + uniqueness.score * 0.2,
     );
     const issues = {
@@ -58,7 +56,7 @@ export class QualityAnalyzerService {
       components: {
         completeness: completeness.score,
         consistency: consistency.score,
-        accuracy: accuracy.score,
+        validity: validity.score,
         uniqueness: uniqueness.score,
       },
       suggestions,
@@ -118,34 +116,33 @@ export class QualityAnalyzerService {
     };
   }
 
-  assessAccuracy(rows: Row[], profiles: FieldProfile[]): QualityComponent {
+  assessValidity(rows: Row[], profiles: FieldProfile[]): QualityComponent {
     const fieldIssues: QualityFieldIssue[] = [];
-    let outlierCount = 0;
-    let numericValueCount = 0;
+    let invalidCount = 0;
+    let inspectedCount = 0;
 
     for (const profile of profiles.filter((candidate) => this.numericTypes.includes(candidate.type))) {
-      const values = this.numericValues(rows, profile.name);
-      if (values.length < 4) continue;
-      const mean = this.statistics.mean(values);
-      const deviation = this.statistics.standardDeviation(values);
-      if (deviation === 0) continue;
-      const improbableCount = values.filter((value) => Math.abs((value - mean) / deviation) > 3).length;
-      numericValueCount += values.length;
-      outlierCount += improbableCount;
-      if (improbableCount > 0) {
+      const values = rows.map((row) => row[profile.name])
+        .filter((value) => value !== null && value !== undefined && String(value).trim() !== '');
+      const invalidValues = values.filter((value) => !Number.isFinite(
+        typeof value === 'number' ? value : Number(String(value).replace(/[$€£₹,%\s]/g, '')),
+      )).length;
+      inspectedCount += values.length;
+      invalidCount += invalidValues;
+      if (invalidValues > 0) {
         fieldIssues.push({
           field: profile.name,
-          severity: this.severityForImpact((improbableCount / values.length) * 100),
+          severity: this.severityForImpact((invalidValues / Math.max(values.length, 1)) * 100),
         });
       }
     }
 
-    const impact = numericValueCount ? (outlierCount / numericValueCount) * 100 : 0;
+    const impact = inspectedCount ? (invalidCount / inspectedCount) * 100 : 0;
     return {
       score: this.scoreFromImpact(impact),
-      details: outlierCount
-        ? `${outlierCount} statistically improbable value${outlierCount === 1 ? '' : 's'} exceed 3 standard deviations`
-        : 'No statistically improbable numeric values detected',
+      details: invalidCount
+        ? `${invalidCount} non-empty value${invalidCount === 1 ? '' : 's'} could not be parsed as numeric`
+        : 'All non-empty values in numeric fields could be parsed',
       fieldIssues,
     };
   }
@@ -180,13 +177,13 @@ export class QualityAnalyzerService {
   private generateSuggestions(components: {
     completeness: QualityComponent;
     consistency: QualityComponent;
-    accuracy: QualityComponent;
+    validity: QualityComponent;
     uniqueness: QualityComponent;
   }): QualitySuggestion[] {
     const suggestions: QualitySuggestion[] = [];
     this.addFieldSuggestions(suggestions, 'completeness', components.completeness, (field) => `Fill missing values in ${field}`);
     this.addFieldSuggestions(suggestions, 'consistency', components.consistency, (field) => `Standardize formatting in ${field}`);
-    this.addFieldSuggestions(suggestions, 'accuracy', components.accuracy, (field) => `Review statistically improbable values in ${field}`);
+    this.addFieldSuggestions(suggestions, 'validity', components.validity, (field) => `Review values that could not be parsed in ${field}`);
     this.addFieldSuggestions(suggestions, 'uniqueness', components.uniqueness, (field) => `Review repeated values in identifier field ${field}`);
     if (components.uniqueness.duplicateRows) {
       const duplicateRows = components.uniqueness.duplicateRows;

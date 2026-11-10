@@ -95,11 +95,11 @@ export class StatisticsService {
     const x = Array.from({ length: n }, (_, i) => i);
     const slope = this.linearRegressionSlope(x, values);
     
-    // Normalize slope by value range for comparison
+    // Normalize slope by value range to avoid calling small fluctuations a trend.
     const range = Math.max(...values) - Math.min(...values);
     const normalizedSlope = range > 0 ? slope / range : 0;
     
-    if (Math.abs(normalizedSlope) < 0.01) return { slope, type: 'stable' };
+    if (Math.abs(normalizedSlope) < 0.05) return { slope, type: 'stable' };
     return { slope, type: slope > 0 ? 'increasing' : 'decreasing' };
   }
   

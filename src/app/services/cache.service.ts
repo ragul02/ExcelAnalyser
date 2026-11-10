@@ -115,37 +115,34 @@ export class CacheService {
   }
   
   /**
-   * Hash a dataset using first 100 rows sample
-   * Creates a deterministic hash based on data structure and sample content
+   * Fingerprint the complete dataset and ordered schema for cache identity.
    * @param rows Dataset rows
    * @param columns Column names
    * @returns Hash string for cache key
    */
   hashDataset(rows: unknown[], columns: string[]): string {
-    // Sample first 100 rows for performance
-    const sampleSize = Math.min(100, rows.length);
-    const sample = rows.slice(0, sampleSize);
-    
-    // Create hash components
-    const components = [
-      `rows:${rows.length}`,
-      `cols:${columns.length}`,
-      `colNames:${columns.sort().join(',')}`,
-      `sample:${JSON.stringify(sample)}`
-    ];
-    
-    // Simple but effective hash: combine components and generate numeric hash
-    const hashString = components.join('|');
-    let hash = 0;
-    
-    for (let i = 0; i < hashString.length; i++) {
-      const char = hashString.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32-bit integer
+    const canonicalize = (value: unknown): string => {
+      if (value instanceof Date) return JSON.stringify(value.toISOString());
+      if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`;
+      if (value && typeof value === 'object') {
+        const record = value as Record<string, unknown>;
+        return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalize(record[key])}`).join(',')}}`;
+      }
+      if (typeof value === 'number' && !Number.isFinite(value)) return JSON.stringify(String(value));
+      return JSON.stringify(value) ?? 'undefined';
+    };
+
+    const input = canonicalize({ columns, rows });
+    // Two independent 32-bit streams reduce accidental collisions while keeping
+    // the API synchronous for existing cache callers. This is not a security hash.
+    let first = 0x811c9dc5;
+    let second = 0x9e3779b9;
+    for (let index = 0; index < input.length; index++) {
+      const code = input.charCodeAt(index);
+      first = Math.imul(first ^ code, 0x01000193);
+      second = Math.imul(second ^ code, 0x85ebca6b);
     }
-    
-    // Return as hex string for readability
-    return Math.abs(hash).toString(36);
+    return `${(first >>> 0).toString(36)}${(second >>> 0).toString(36)}`;
   }
   
   /**

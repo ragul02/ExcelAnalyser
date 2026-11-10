@@ -14,6 +14,8 @@ export interface TimeSeries {
   dates: Date[];
   values: number[];
   frequency: 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'yearly' | 'unknown';
+  duplicatePeriods: number;
+  missingPeriods: number;
 }
 
 /**
@@ -45,6 +47,9 @@ export interface ForecastResult {
   accuracy: ForecastAccuracy;
   method: 'exponential_smoothing' | 'holt_winters' | 'arima';
   parameters: Record<string, number>;
+  frequency?: TimeSeries['frequency'];
+  duplicatePeriodsAggregated?: number;
+  missingPeriodsEstimated?: number;
   patternInfo: {
     hasTrend: boolean;
     trendType?: TrendType;

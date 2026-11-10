@@ -113,7 +113,7 @@ describe('TensorFlowService', () => {
       // Initialize first
       vi.mocked(tf.setBackend).mockResolvedValue(true);
       vi.mocked(tf.ready).mockResolvedValue();
-      vi.mocked(tf.memory).mockReturnValue({ numTensors: 0, numBytes: 0 });
+      vi.mocked(tf.memory).mockReturnValue({ numTensors: 0, numBytes: 0, numDataBuffers: 0, reasons: [] });
       
       await service.initialize();
       await service.dispose();
@@ -133,7 +133,7 @@ describe('TensorFlowService', () => {
     it('should handle disposal errors gracefully', async () => {
       vi.mocked(tf.setBackend).mockResolvedValue(true);
       vi.mocked(tf.ready).mockResolvedValue();
-      vi.mocked(tf.memory).mockReturnValue({ numTensors: 0, numBytes: 0 });
+      vi.mocked(tf.memory).mockReturnValue({ numTensors: 0, numBytes: 0, numDataBuffers: 0, reasons: [] });
       vi.mocked(tf.disposeVariables).mockImplementation(() => {
         throw new Error('Disposal error');
       });
@@ -153,7 +153,8 @@ describe('TensorFlowService', () => {
       vi.mocked(tf.memory).mockReturnValue({
         numTensors: 10,
         numBytes: 1024000,
-        numDataBuffers: 5
+        numDataBuffers: 5,
+        reasons: [],
       });
       
       await service.initialize();
@@ -180,14 +181,18 @@ describe('TensorFlowService', () => {
       // Test below threshold (150MB default)
       vi.mocked(tf.memory).mockReturnValue({
         numTensors: 10,
-        numBytes: 100 * 1024 * 1024 // 100 MB
+        numBytes: 100 * 1024 * 1024, // 100 MB
+        numDataBuffers: 10,
+        reasons: [],
       });
       expect(service.isMemoryExceeded()).toBe(false);
       
       // Test above threshold
       vi.mocked(tf.memory).mockReturnValue({
         numTensors: 100,
-        numBytes: 200 * 1024 * 1024 // 200 MB
+        numBytes: 200 * 1024 * 1024, // 200 MB
+        numDataBuffers: 100,
+        reasons: [],
       });
       expect(service.isMemoryExceeded()).toBe(true);
     });
@@ -197,7 +202,9 @@ describe('TensorFlowService', () => {
       vi.mocked(tf.ready).mockResolvedValue();
       vi.mocked(tf.memory).mockReturnValue({
         numTensors: 10,
-        numBytes: 100 * 1024 * 1024 // 100 MB
+        numBytes: 100 * 1024 * 1024, // 100 MB
+        numDataBuffers: 10,
+        reasons: [],
       });
       
       await service.initialize();
@@ -225,7 +232,7 @@ describe('TensorFlowService', () => {
     it('should execute operations within tidy scope', async () => {
       vi.mocked(tf.setBackend).mockResolvedValue(true);
       vi.mocked(tf.ready).mockResolvedValue();
-      vi.mocked(tf.tidy).mockImplementation((fn) => fn());
+      vi.mocked(tf.tidy).mockImplementation((fn) => typeof fn === 'function' ? fn() as any : undefined as any);
       
       await service.initialize();
       
@@ -248,7 +255,7 @@ describe('TensorFlowService', () => {
     it('should propagate operation errors', async () => {
       vi.mocked(tf.setBackend).mockResolvedValue(true);
       vi.mocked(tf.ready).mockResolvedValue();
-      vi.mocked(tf.tidy).mockImplementation((fn) => fn());
+      vi.mocked(tf.tidy).mockImplementation((fn) => typeof fn === 'function' ? fn() as any : undefined as any);
       
       await service.initialize();
       
@@ -262,7 +269,7 @@ describe('TensorFlowService', () => {
     it('should support async operations', async () => {
       vi.mocked(tf.setBackend).mockResolvedValue(true);
       vi.mocked(tf.ready).mockResolvedValue();
-      vi.mocked(tf.tidy).mockImplementation((fn) => fn());
+      vi.mocked(tf.tidy).mockImplementation((fn) => typeof fn === 'function' ? fn() as any : undefined as any);
       
       await service.initialize();
       
@@ -289,8 +296,8 @@ describe('TensorFlowService', () => {
       
       // Mock memory showing tensors before and after cleanup
       vi.mocked(tf.memory)
-        .mockReturnValueOnce({ numTensors: 10, numBytes: 1000 })
-        .mockReturnValueOnce({ numTensors: 5, numBytes: 500 });
+        .mockReturnValueOnce({ numTensors: 10, numBytes: 1000, numDataBuffers: 10, reasons: [] })
+        .mockReturnValueOnce({ numTensors: 5, numBytes: 500, numDataBuffers: 5, reasons: [] });
       
       await service.initialize();
       const cleaned = service.cleanupOrphanedTensors();
@@ -352,7 +359,7 @@ describe('TensorFlowService', () => {
     it('should reinitialize with default sequence', async () => {
       vi.mocked(tf.setBackend).mockResolvedValue(true);
       vi.mocked(tf.ready).mockResolvedValue();
-      vi.mocked(tf.memory).mockReturnValue({ numTensors: 0, numBytes: 0 });
+      vi.mocked(tf.memory).mockReturnValue({ numTensors: 0, numBytes: 0, numDataBuffers: 0, reasons: [] });
       
       await service.initialize();
       const result = await service.reinitialize();
@@ -364,7 +371,7 @@ describe('TensorFlowService', () => {
     it('should reinitialize with specific backend', async () => {
       vi.mocked(tf.setBackend).mockResolvedValue(true);
       vi.mocked(tf.ready).mockResolvedValue();
-      vi.mocked(tf.memory).mockReturnValue({ numTensors: 0, numBytes: 0 });
+      vi.mocked(tf.memory).mockReturnValue({ numTensors: 0, numBytes: 0, numDataBuffers: 0, reasons: [] });
       
       await service.initialize();
       vi.clearAllMocks();
@@ -380,7 +387,7 @@ describe('TensorFlowService', () => {
     it('should handle reinitialization failure', async () => {
       vi.mocked(tf.setBackend).mockResolvedValue(true);
       vi.mocked(tf.ready).mockResolvedValue();
-      vi.mocked(tf.memory).mockReturnValue({ numTensors: 0, numBytes: 0 });
+      vi.mocked(tf.memory).mockReturnValue({ numTensors: 0, numBytes: 0, numDataBuffers: 0, reasons: [] });
       
       await service.initialize();
       

@@ -20,8 +20,8 @@ interface ChatMessage {
       <!-- Header -->
       <div class="ai-header">
         <div class="ai-title">
-          <span class="ai-icon">AI</span>
-          <h3>AI Insights</h3>
+          <span class="ai-icon" aria-hidden="true">Q</span>
+          <h3>Query assistant <small>(experimental)</small></h3>
           @if (!aiQuery.isEnabled()) {
             <span class="badge disabled">Disabled</span>
           } @else if (aiQuery.isProcessing()) {
@@ -48,20 +48,19 @@ interface ChatMessage {
         <!-- Enable AI Prompt -->
         <div class="enable-prompt">
           <div class="enable-content">
-            <h4>AI-Powered Data Analysis</h4>
-            <p>Ask questions about your data in natural language:</p>
+            <h4>Ask about your data</h4>
+            <p>Local rules interpret simple questions and calculate answers from the loaded rows:</p>
             <ul>
-              <li>"Why did sales drop in March?"</li>
-              <li>"What factors influenced revenue?"</li>
+              <li>"How did sales change in March?"</li>
+              <li>"What is the average revenue?"</li>
               <li>"Show me unusual patterns"</li>
               <li>"How do regions compare?"</li>
             </ul>
             <p class="privacy-note">
-              <strong>Privacy First:</strong> All AI processing happens locally on your device. 
-              No data is sent to external servers.
+              <strong>Local processing:</strong> This question assistant uses deterministic heuristics on this device. It does not send your data to a model or external server.
             </p>
             <button type="button" class="btn-primary" (click)="enableAI()">
-              Enable AI Insights
+              Enable query assistant
             </button>
           </div>
         </div>
@@ -1381,7 +1380,7 @@ export class AIInsightsPanelComponent {
   async enableAI(): Promise<void> {
     try {
       await this.aiQuery.enable();
-      this.addSystemMessage('AI Insights enabled! Ask me anything about your data.');
+      this.addSystemMessage('Query assistant enabled. Check the interpreted fields and calculation in each answer.');
     } catch (error) {
       this.addSystemMessage('Failed to enable AI Insights. Please try again.');
       console.error('Failed to enable AI:', error);

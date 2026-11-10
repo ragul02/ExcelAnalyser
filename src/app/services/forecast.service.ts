@@ -1,6 +1,5 @@
 import { Service, inject } from '@angular/core';
 import { StatisticsService } from './statistics.service';
-import { TensorFlowService } from './tensorflow.service';
 import {
   TimeSeries,
   ForecastPoint,
@@ -28,7 +27,6 @@ type Row = Record<string, unknown>;
 @Service()
 export class ForecastService {
   private readonly statistics = inject(StatisticsService);
-  private readonly tfService = inject(TensorFlowService);
   
   // Configuration constants
   private readonly MIN_DATA_POINTS = 10;
@@ -97,6 +95,10 @@ export class ForecastService {
         // Use exponential smoothing for non-seasonal data
         result = await this.exponentialSmoothingForecast(timeSeries, periods, trendType);
       }
+
+      result.frequency = timeSeries.frequency;
+      result.duplicatePeriodsAggregated = timeSeries.duplicatePeriods;
+      result.missingPeriodsEstimated = timeSeries.missingPeriods;
       
       // Add pattern information
       result.patternInfo = {
@@ -140,7 +142,8 @@ export class ForecastService {
     dateField: string,
     measureField: string
   ): TimeSeries {
-    const pairs: Array<{ date: Date; value: number }> = [];
+    const valuesByDate = new Map<number, number>();
+    let validPairCount = 0;
     
     // Extract valid date-value pairs
     for (const row of rows) {
@@ -154,27 +157,39 @@ export class ForecastService {
           : new Date(String(dateValue));
         
         // Parse numeric value
-        const value = typeof measureValue === 'number' 
-          ? measureValue 
-          : Number(measureValue);
+        const value = typeof measureValue === 'number'
+          ? measureValue
+          : Number(String(measureValue).replace(/[$€£₹,%\s]/g, ''));
         
         // Only include valid pairs
         if (!isNaN(date.getTime()) && !isNaN(value)) {
-          pairs.push({ date, value });
+          const timestamp = date.getTime();
+          valuesByDate.set(timestamp, (valuesByDate.get(timestamp) ?? 0) + value);
+          validPairCount++;
         }
       }
     }
     
-    // Sort by date ascending
-    pairs.sort((a, b) => a.date.getTime() - b.date.getTime());
+    // Sum repeated timestamps into one period for additive measures.
+    const pairs = [...valuesByDate.entries()]
+      .sort(([first], [second]) => first - second)
+      .map(([timestamp, value]) => ({ date: new Date(timestamp), value }));
     
     // Detect frequency
-    const frequency = this.detectFrequency(pairs.map(p => p.date));
+    const dates = pairs.map((pair) => pair.date);
+    const frequency = this.detectFrequency(dates);
+    const intervals = dates.slice(1).map((date, index) => date.getTime() - dates[index].getTime());
+    const typicalInterval = intervals.length ? this.statistics.median(intervals) : 0;
+    const missingPeriods = typicalInterval
+      ? intervals.reduce((total, interval) => total + Math.max(0, Math.round(interval / typicalInterval) - 1), 0)
+      : 0;
     
     return {
       dates: pairs.map(p => p.date),
       values: pairs.map(p => p.value),
-      frequency
+      frequency,
+      duplicatePeriods: validPairCount - pairs.length,
+      missingPeriods,
     };
   }
   
@@ -331,7 +346,7 @@ export class ForecastService {
       const margin95 = 1.96 * standardError;
       
       // Calculate next date
-      const forecastDate = new Date(lastDate.getTime() + dateIncrement * i);
+      const forecastDate = this.nextForecastDate(lastDate, timeSeries.frequency, dateIncrement);
       
       predictions.push({
         date: forecastDate,
@@ -341,6 +356,7 @@ export class ForecastService {
         lowerBound95: forecastValue - margin95,
         upperBound95: forecastValue + margin95
       });
+      lastDate.setTime(forecastDate.getTime());
     }
     
     // Calculate accuracy metrics on historical data
@@ -420,7 +436,7 @@ export class ForecastService {
       const margin95 = 1.96 * standardError;
       
       // Calculate next date
-      const forecastDate = new Date(lastDate.getTime() + dateIncrement * (i + 1));
+      const forecastDate = this.nextForecastDate(lastDate, timeSeries.frequency, dateIncrement);
       
       predictions.push({
         date: forecastDate,
@@ -430,6 +446,7 @@ export class ForecastService {
         lowerBound95: forecastValue - margin95,
         upperBound95: forecastValue + margin95
       });
+      lastDate.setTime(forecastDate.getTime());
     }
     
     // Calculate accuracy metrics on historical data
@@ -515,12 +532,8 @@ export class ForecastService {
       return 'unknown';
     }
     
-    // Calculate average difference between consecutive dates
-    let totalDiff = 0;
-    for (let i = 1; i < Math.min(dates.length, 10); i++) {
-      totalDiff += dates[i].getTime() - dates[i - 1].getTime();
-    }
-    const avgDiffMs = totalDiff / Math.min(dates.length - 1, 9);
+    const differences = dates.slice(1).map((date, index) => date.getTime() - dates[index].getTime());
+    const avgDiffMs = this.statistics.median(differences);
     const avgDiffDays = avgDiffMs / (1000 * 60 * 60 * 24);
     
     // Classify frequency
@@ -549,13 +562,25 @@ export class ForecastService {
     }
     
     // Calculate average increment from actual data
-    let totalDiff = 0;
-    const count = Math.min(dates.length - 1, 10);
-    for (let i = 0; i < count; i++) {
-      totalDiff += dates[i + 1].getTime() - dates[i].getTime();
+    const differences = dates.slice(1).map((date, index) => date.getTime() - dates[index].getTime());
+    return this.statistics.median(differences);
+  }
+
+  private nextForecastDate(date: Date, frequency: TimeSeries['frequency'], fallbackIncrement: number): Date {
+    const year = date.getUTCFullYear();
+    const month = date.getUTCMonth();
+    const day = date.getUTCDate();
+    const monthOffset = frequency === 'monthly' ? 1 : frequency === 'quarterly' ? 3 : frequency === 'yearly' ? 12 : 0;
+    if (monthOffset) {
+      const targetMonth = month + monthOffset;
+      const targetYear = year + Math.floor(targetMonth / 12);
+      const normalizedMonth = targetMonth % 12;
+      const lastDay = new Date(Date.UTC(targetYear, normalizedMonth + 1, 0)).getUTCDate();
+      return new Date(Date.UTC(targetYear, normalizedMonth, Math.min(day, lastDay), date.getUTCHours(), date.getUTCMinutes(), date.getUTCSeconds()));
     }
-    
-    return totalDiff / count;
+    if (frequency === 'daily') return new Date(Date.UTC(year, month, day + 1, date.getUTCHours(), date.getUTCMinutes(), date.getUTCSeconds()));
+    if (frequency === 'weekly') return new Date(Date.UTC(year, month, day + 7, date.getUTCHours(), date.getUTCMinutes(), date.getUTCSeconds()));
+    return new Date(date.getTime() + fallbackIncrement);
   }
   
   /**

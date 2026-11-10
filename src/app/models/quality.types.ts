@@ -2,7 +2,7 @@
  * Quality analysis result types.
  */
 
-export type QualityCategory = 'completeness' | 'consistency' | 'accuracy' | 'uniqueness';
+export type QualityCategory = 'completeness' | 'consistency' | 'validity' | 'uniqueness';
 export type QualitySeverity = 'critical' | 'moderate' | 'minor';
 
 export interface QualityFieldIssue {
@@ -38,7 +38,7 @@ export interface QualityScore {
   components: {
     completeness: number;
     consistency: number;
-    accuracy: number;
+    validity: number;
     uniqueness: number;
   };
   suggestions: QualitySuggestion[];

@@ -680,6 +680,28 @@ dd {
   border-radius: 6px;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sr-only:focus-within {
+  position: static;
+  width: auto;
+  height: auto;
+  margin: 12px 0;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+}
+
 .axis,
 .legend {
   font-size: 12px;

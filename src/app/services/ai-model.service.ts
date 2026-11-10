@@ -1,15 +1,12 @@
-import { inject, signal, computed } from '@angular/core';
+import { signal } from '@angular/core';
 import { Service } from '@angular/core';
-import * as ort from 'onnxruntime-web';
 
 /**
- * AI Model Service - Manages ONNX Runtime models for semantic understanding
+ * Local heuristic service for assisted query interpretation.
  * 
  * This service provides:
- * - Text embedding generation for semantic similarity
- * - Model lifecycle management (loading, unloading)
- * - Performance optimization with WebGL/WebAssembly backends
- * - Memory management for large models
+ * This currently uses deterministic token and string heuristics; it does not
+ * load or run a machine-learning model.
  */
 @Service()
 export class AIModelService {
@@ -17,12 +14,6 @@ export class AIModelService {
   readonly isModelLoaded = signal(false);
   readonly isLoading = signal(false);
   readonly loadError = signal<string | null>(null);
-  readonly backend = signal<'webgl' | 'wasm' | 'webgpu'>('wasm');
-  readonly modelMemoryUsage = signal(0);
-
-  // Model sessions
-  private embedSession: ort.InferenceSession | null = null;
-  
   // Tokenizer vocabulary (simplified - for production use actual tokenizer)
   private vocab: Map<string, number> = new Map();
   private readonly maxSequenceLength = 128;
@@ -42,17 +33,8 @@ export class AIModelService {
     this.loadError.set(null);
 
     try {
-      // Configure ONNX Runtime for optimal performance
-      await this.configureBackend();
-
-      // For now, we'll use a lightweight approach without downloading models
-      // In production, you would download and load actual ONNX models
-      
-      // Simulate model loaded state
       this.isModelLoaded.set(true);
-      this.modelMemoryUsage.set(50); // Simulated MB
-
-      console.log('[AI Model] Initialized successfully with backend:', this.backend());
+      console.log('[Query assistance] Local heuristic engine ready');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.loadError.set(errorMessage);
@@ -61,37 +43,6 @@ export class AIModelService {
     } finally {
       this.isLoading.set(false);
     }
-  }
-
-  /**
-   * Configure ONNX Runtime backend for best performance
-   */
-  private async configureBackend(): Promise<void> {
-    try {
-      // Try WebGPU first (fastest, newest)
-      if ('gpu' in navigator) {
-        // WebGPU backend configuration
-        this.backend.set('webgpu');
-        console.log('[AI Model] Using WebGPU backend');
-        return;
-      }
-    } catch (e) {
-      console.log('[AI Model] WebGPU not available');
-    }
-
-    try {
-      // Try WebGL (good performance, widely supported)  
-      this.backend.set('webgl');
-      console.log('[AI Model] Using WebGL backend');
-      return;
-    } catch (e) {
-      console.log('[AI Model] WebGL not available');
-    }
-
-    // Fallback to WebAssembly (slower but works everywhere)
-    this.backend.set('wasm');
-    ort.env.wasm.numThreads = Math.min(navigator.hardwareConcurrency || 4, 4);
-    console.log('[AI Model] Using WebAssembly backend with', ort.env.wasm.numThreads, 'threads');
   }
 
   /**
@@ -235,13 +186,7 @@ export class AIModelService {
    */
   async dispose(): Promise<void> {
     try {
-      if (this.embedSession) {
-        // await this.embedSession.dispose();
-        this.embedSession = null;
-      }
-
       this.isModelLoaded.set(false);
-      this.modelMemoryUsage.set(0);
       console.log('[AI Model] Disposed successfully');
     } catch (error) {
       console.error('[AI Model] Disposal failed:', error);
@@ -262,7 +207,7 @@ export class AIModelService {
       };
     }
 
-    return { used: this.modelMemoryUsage(), available: 2048 };
+    return { used: 0, available: 0 };
   }
 
   // ========== Private Helper Methods ==========

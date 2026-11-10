@@ -1,0 +1,96 @@
+﻿
+    /* Proactive Brief Styles */
+    .proactive-brief {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+
+    .proactive-brief header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 16px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+
+    .brief-kicker {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #14532d;
+      font-weight: 600;
+      margin: 0 0 4px 0;
+    }
+
+    .proactive-brief h4 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: #172033;
+    }
+
+    .executive-summary {
+      padding: 14px;
+      background: #f0fdf4;
+      border-left: 3px solid #22c55e;
+      border-radius: 4px;
+      margin-bottom: 18px;
+      line-height: 1.6;
+      font-size: 14px;
+      color: #172033;
+    }
+
+    .brief-section {
+      margin-bottom: 20px;
+    }
+
+    .brief-section h5 {
+      margin: 0 0 10px 0;
+      font-size: 13px;
+      font-weight: 600;
+      color: #172033;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .brief-section p {
+      margin: 0 0 8px 0;
+      padding-left: 12px;
+      border-left: 2px solid #e2e8f0;
+      line-height: 1.5;
+      font-size: 13px;
+      color: #475569;
+    }
+
+    .brief-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .brief-section.risk h5 {
+      color: #c2410c;
+    }
+
+    .brief-section.risk p {
+      border-left-color: #fed7aa;
+    }
+
+    .brief-section.opportunity h5 {
+      color: #166534;
+    }
+
+    .brief-section.opportunity p {
+      border-left-color: #bbf7d0;
+    }
+
+    .question-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }

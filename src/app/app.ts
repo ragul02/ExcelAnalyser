@@ -62,17 +62,29 @@ interface DashboardItem {
 }
 
 interface ProjectState {
+  version: 1;
   name: string;
   sourcePath: string;
   sheets: string[];
   activeSheet: string;
+  headerRow?: number;
   rows: Row[];
+  originalRows?: Row[];
   columns: string[];
+  originalColumns?: string[];
   schemaOverrides: Record<string, FieldType>;
   transformations: string[];
   calculatedFields: { name: string; formula: string }[];
   savedCharts: ChartDefinition[];
   dashboardItems: DashboardItem[];
+}
+
+interface DataSnapshot {
+  rows: Row[];
+  columns: string[];
+  schemaOverrides: Record<string, FieldType>;
+  transformations: string[];
+  calculatedFields: { name: string; formula: string }[];
 }
 
 const emptyChart = (): ChartDefinition => ({
@@ -96,6 +108,7 @@ const emptyChart = (): ChartDefinition => ({
   imports: [CommonModule, FormsModule, AIInsightsPanelComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss',
+  host: { '(keydown)': 'handleQualityKeydown($event)' },
 })
 export class App {
   readonly Math = Math;
@@ -109,25 +122,33 @@ export class App {
   workbookSheets: { name: string; rows: number; columns: number }[] = [];
   sourcePath = '';
   activeSheet = '';
+  headerRow = 1;
   rows = signal<Row[]>([]);
   importedRows: Row[] = [];
+  importedColumns: string[] = [];
   columns = signal<string[]>([]);
-  schemaOverrides: Record<string, FieldType> = {};
+  readonly schemaOverrides = signal<Record<string, FieldType>>({});
   transformations: string[] = [];
   calculatedFields: { name: string; formula: string }[] = [];
   savedCharts: ChartDefinition[] = [];
   dashboardItems: DashboardItem[] = [];
-  recentProjects: string[] = JSON.parse(localStorage.getItem('dvis-recent') || '[]');
+  recentProjects: string[] = this.readRecentProjects();
   selectedTab: 'overview' | 'data' | 'profile' | 'chart' | 'dashboard' | 'export' | 'insights' = 'data';
   notification = 'Import an Excel or CSV file to begin.';
   busy = false;
-  qualityScore = 100;
+  readonly qualityScore = computed(() => {
+    const profiles = this.profiles();
+    const missing = profiles.reduce((sum, profile) => sum + profile.missing, 0);
+    const cells = Math.max(this.rows().length * Math.max(this.columns().length, 1), 1);
+    return Math.max(0, Math.round(100 - (missing / cells) * 100 - this.duplicateCount() * 2));
+  });
   qualityDetailsOpen = false;
+  private qualityDialogOpener: HTMLElement | null = null;
   forecastPeriods = 10;
   forecastBusy = false;
   forecastError = '';
-  undoStack: Row[][] = [];
-  redoStack: Row[][] = [];
+  undoStack: DataSnapshot[] = [];
+  redoStack: DataSnapshot[] = [];
   selectedRowLimit = 100;
   chart = emptyChart();
   chartData: ChartPoint[] = [];
@@ -140,10 +161,6 @@ export class App {
 
   readonly profiles = computed(() => {
     const profiles = this.columns().map((column) => this.profileColumn(column));
-    const missing = profiles.reduce((sum, profile) => sum + profile.missing, 0);
-    const cells = Math.max(this.rows().length * Math.max(this.columns().length, 1), 1);
-    const duplicatePenalty = this.duplicateCount() * 2;
-    this.qualityScore = Math.max(0, Math.round(100 - (missing / cells) * 100 - duplicatePenalty));
     return profiles;
   });
 
@@ -175,7 +192,7 @@ export class App {
     const uniqueness = this.rows().length
       ? Math.max(0, Math.round(100 - (this.duplicateCount() / this.rows().length) * 100))
       : 100;
-    return { completeness, consistency: 100, accuracy: 100, uniqueness };
+    return { completeness, consistency: 100, validity: 100, uniqueness };
   });
 
   readonly qualityIssues = computed(() => {
@@ -237,6 +254,7 @@ export class App {
     reader.onload = () => {
       try {
         this.workbook = XLSX.read(reader.result, { type: 'array', cellDates: true });
+        this.headerRow = 1;
         this.workbookSheets = this.workbook.SheetNames.map((name) => {
           const sheet = this.workbook!.Sheets[name];
           const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1:A1');
@@ -255,18 +273,69 @@ export class App {
     reader.readAsArrayBuffer(file);
   }
 
+  loadSampleData(): void {
+    const sample: Row[] = [
+      { Date: '2025-01-01', Region: 'North', Product: 'Coffee', Units: 42, Revenue: 168 },
+      { Date: '2025-01-01', Region: 'South', Product: 'Tea', Units: 35, Revenue: 105 },
+      { Date: '2025-02-01', Region: 'North', Product: 'Tea', Units: 39, Revenue: 117 },
+      { Date: '2025-02-01', Region: 'South', Product: 'Coffee', Units: 48, Revenue: 192 },
+      { Date: '2025-03-01', Region: 'North', Product: 'Coffee', Units: 51, Revenue: 204 },
+      { Date: '2025-03-01', Region: 'South', Product: 'Tea', Units: 44, Revenue: 132 },
+      { Date: '2025-04-01', Region: 'North', Product: 'Tea', Units: 47, Revenue: 141 },
+      { Date: '2025-04-01', Region: 'South', Product: 'Coffee', Units: 56, Revenue: 224 },
+      { Date: '2025-05-01', Region: 'North', Product: 'Coffee', Units: 58, Revenue: 232 },
+      { Date: '2025-05-01', Region: 'South', Product: 'Tea', Units: 49, Revenue: 147 },
+      { Date: '2025-06-01', Region: 'North', Product: 'Tea', Units: 53, Revenue: 159 },
+      { Date: '2025-06-01', Region: 'South', Product: 'Coffee', Units: 62, Revenue: 248 },
+    ];
+    this.workbook = undefined;
+    this.workbookSheets = [];
+    this.sourcePath = 'sample-sales-data.csv';
+    this.activeSheet = 'Sales';
+    this.headerRow = 1;
+    this.importedRows = structuredClone(sample);
+    this.importedColumns = Object.keys(sample[0]);
+    this.rows.set(sample);
+    this.columns.set([...this.importedColumns]);
+    this.schemaOverrides.set({});
+    this.transformations = [];
+    this.calculatedFields = [];
+    this.undoStack = [];
+    this.redoStack = [];
+    this.selectedTab = 'overview';
+    this.setSmartChartDefaults();
+    this.notification = 'Sample sales data loaded. Try profiling, charting, or asking a question.';
+    this.autosave();
+    this.triggerAnalytics();
+  }
+
   loadSheet(name: string): void {
     if (!this.workbook) return;
+    this.headerRow = Math.min(Math.max(1, Math.floor(this.headerRow || 1)), this.headerRowMax());
     const sheet = this.workbook.Sheets[name];
-    const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', raw: false });
-    const cleaned = raw.filter((row) => Object.values(row).some((value) => String(value).trim() !== ''));
-    const columns = Array.from(new Set(cleaned.flatMap((row) => Object.keys(row).map((key) => key.trim()))));
-    const rows = cleaned.map((row) => this.normalizeRow(row, columns));
+    const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+      header: 1,
+      range: Math.max(0, Math.floor(this.headerRow) - 1),
+      defval: '',
+      raw: false,
+    });
+    const header = matrix[0] ?? [];
+    const used = new Map<string, number>();
+    const columns = header.map((value, index) => {
+      const base = String(value ?? '').trim() || `Column ${index + 1}`;
+      const count = used.get(base) ?? 0;
+      used.set(base, count + 1);
+      return count ? `${base} (${count + 1})` : base;
+    });
+    const rows = matrix.slice(1)
+      .map((values) => Object.fromEntries(columns.map((column, index) => [column, values[index] ?? ''])))
+      .filter((row) => Object.values(row).some((value) => String(value).trim() !== ''));
     this.activeSheet = name;
     this.importedRows = structuredClone(rows);
+    this.importedColumns = [...columns];
     this.rows.set(rows);
     this.columns.set(columns);
-    this.schemaOverrides = {};
+    this.schemaOverrides.set({});
     this.transformations = [];
     this.calculatedFields = [];
     this.undoStack = [];
@@ -276,6 +345,10 @@ export class App {
     
     // Trigger analytics analysis
     this.triggerAnalytics();
+  }
+
+  headerRowMax(): number {
+    return this.workbookSheets.find((sheet) => sheet.name === this.activeSheet)?.rows ?? 1;
   }
   
   /**
@@ -492,7 +565,21 @@ export class App {
   }
 
   toggleQualityDetails(): void {
-    this.qualityDetailsOpen = !this.qualityDetailsOpen;
+    if (!this.qualityDetailsOpen) {
+      this.qualityDialogOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      this.qualityDetailsOpen = true;
+      setTimeout(() => document.getElementById('quality-dialog')?.focus());
+      return;
+    }
+    this.qualityDetailsOpen = false;
+    setTimeout(() => this.qualityDialogOpener?.focus());
+  }
+
+  handleQualityKeydown(event: KeyboardEvent): void {
+    if (this.qualityDetailsOpen && event.key === 'Escape') {
+      event.preventDefault();
+      this.toggleQualityDetails();
+    }
   }
 
   goToAnalysisTab(tab: 'profile' | 'insights' | 'chart' | 'dashboard'): void {
@@ -616,7 +703,7 @@ export class App {
     const missing = this.rows().length - values.length;
     const uniqueMap = new Map<string, number>();
     for (const value of values) uniqueMap.set(String(value), (uniqueMap.get(String(value)) || 0) + 1);
-    const type = this.schemaOverrides[column] || this.detectType(column, values);
+    const type = this.schemaOverrides()[column] || this.detectType(column, values);
     const numeric = values.map((value) => this.toNumber(value)).filter(Number.isFinite).sort((a, b) => a - b);
     return {
       name: column,
@@ -654,29 +741,56 @@ export class App {
   }
 
   overrideType(column: string, type: FieldType): void {
-    this.schemaOverrides[column] = type;
+    this.pushUndo();
+    this.schemaOverrides.update((overrides) => ({ ...overrides, [column]: type }));
+    this.analytics.invalidateForDataChange();
+    this.triggerAnalytics();
     this.autosave();
   }
 
   pushUndo(): void {
-    this.undoStack.push(structuredClone(this.rows()));
+    this.undoStack.push(this.dataSnapshot());
     this.redoStack = [];
   }
 
   undo(): void {
     const state = this.undoStack.pop();
     if (!state) return;
-    this.redoStack.push(structuredClone(this.rows()));
-    this.rows.set(state);
+    this.redoStack.push(this.dataSnapshot());
+    this.restoreSnapshot(state);
+    this.analytics.invalidateForDataChange();
+    this.triggerAnalytics();
     this.refreshChart();
+    this.autosave();
   }
 
   redo(): void {
     const state = this.redoStack.pop();
     if (!state) return;
-    this.undoStack.push(structuredClone(this.rows()));
-    this.rows.set(state);
+    this.undoStack.push(this.dataSnapshot());
+    this.restoreSnapshot(state);
+    this.analytics.invalidateForDataChange();
+    this.triggerAnalytics();
     this.refreshChart();
+    this.autosave();
+  }
+
+  private dataSnapshot(): DataSnapshot {
+    return structuredClone({
+      rows: this.rows(),
+      columns: this.columns(),
+      schemaOverrides: this.schemaOverrides(),
+      transformations: this.transformations,
+      calculatedFields: this.calculatedFields,
+    });
+  }
+
+  private restoreSnapshot(snapshot: DataSnapshot): void {
+    this.rows.set(snapshot.rows);
+    this.columns.set(snapshot.columns);
+    this.schemaOverrides.set(snapshot.schemaOverrides);
+    this.transformations = snapshot.transformations;
+    this.calculatedFields = snapshot.calculatedFields;
   }
 
   transform(action: 'dedupe' | 'emptyRows' | 'emptyColumns' | 'trim'): void {
@@ -691,6 +805,8 @@ export class App {
       this.columns.set(columns);
     }
     this.rows.set(rows);
+    this.analytics.invalidateForDataChange();
+    this.triggerAnalytics();
     this.transformations.push({ dedupe: 'Removed duplicate rows', emptyRows: 'Removed empty rows', emptyColumns: 'Removed empty columns', trim: 'Trimmed text values' }[action]);
     this.refreshChart();
     this.autosave();
@@ -699,8 +815,14 @@ export class App {
   resetData(): void {
     this.pushUndo();
     this.rows.set(structuredClone(this.importedRows));
-    this.transformations.push('Reset to imported state');
+    this.columns.set([...this.importedColumns]);
+    this.schemaOverrides.set({});
+    this.calculatedFields = [];
+    this.transformations = [];
+    this.analytics.invalidateForDataChange();
     this.refreshChart();
+    this.triggerAnalytics();
+    this.autosave();
   }
 
   addCalculatedField(): void {
@@ -719,6 +841,8 @@ export class App {
       this.pushUndo();
       this.rows.set(rows);
       this.columns.set([...this.columns().filter((column) => column !== name), name]);
+      this.analytics.invalidateForDataChange();
+      this.triggerAnalytics();
       this.calculatedFields.push({ name, formula: this.calcFormula });
       this.calcName = '';
       this.calcFormula = '';
@@ -755,7 +879,7 @@ export class App {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const project = JSON.parse(String(reader.result)) as ProjectState;
+        const project = this.parseProject(JSON.parse(String(reader.result)));
         this.restoreProject(project);
         this.rememberProject(file.name);
         this.notification = `Opened ${file.name}.`;
@@ -768,31 +892,70 @@ export class App {
 
   autosave(): void {
     if (!this.rows().length) return;
-    localStorage.setItem('dvis-autosave', JSON.stringify(this.projectState()));
+    try {
+      localStorage.setItem('dvis-autosave', JSON.stringify(this.projectState()));
+    } catch {
+      this.notification = 'Autosave could not store this project in browser storage. Use Save Project to keep a copy.';
+    }
   }
 
   restoreAutosave(): void {
-    const saved = localStorage.getItem('dvis-autosave');
-    if (saved) this.restoreProject(JSON.parse(saved));
+    try {
+      const saved = localStorage.getItem('dvis-autosave');
+      if (saved) this.restoreProject(this.parseProject(JSON.parse(saved)));
+    } catch {
+      this.notification = 'The saved recovery copy is invalid or unavailable.';
+    }
   }
 
   restoreProject(project: ProjectState): void {
+    this.workbook = undefined;
     this.sourcePath = project.sourcePath;
     this.activeSheet = project.activeSheet;
+    this.headerRow = Math.max(1, project.headerRow ?? 1);
     this.rows.set(project.rows || []);
-    this.importedRows = structuredClone(project.rows || []);
+    this.importedRows = structuredClone(project.originalRows ?? project.rows ?? []);
     this.columns.set(project.columns || []);
-    this.schemaOverrides = project.schemaOverrides || {};
+    this.importedColumns = [...(project.originalColumns ?? project.columns ?? [])];
+    this.workbookSheets = this.activeSheet
+      ? [{ name: this.activeSheet, rows: this.rows().length, columns: this.columns().length }]
+      : [];
+    this.schemaOverrides.set(project.schemaOverrides || {});
     this.transformations = project.transformations || [];
     this.calculatedFields = project.calculatedFields || [];
     this.savedCharts = project.savedCharts || [];
     this.dashboardItems = project.dashboardItems || [];
+    this.selectedTab = 'overview';
     this.setSmartChartDefaults();
+    this.triggerAnalytics();
+  }
+
+  private parseProject(value: unknown): ProjectState {
+    if (!value || typeof value !== 'object') throw new Error('Invalid project');
+    const project = value as Partial<ProjectState>;
+    const isRows = (rows: unknown): rows is Row[] => Array.isArray(rows)
+      && rows.every((row) => !!row && typeof row === 'object' && !Array.isArray(row));
+    if ((project.version !== undefined && project.version !== 1)
+      || !isRows(project.rows)
+      || (project.originalRows !== undefined && !isRows(project.originalRows))
+      || !Array.isArray(project.columns)
+      || !project.columns.every((column) => typeof column === 'string')) {
+      throw new Error('Invalid project data');
+    }
+    return { ...project, version: 1 } as ProjectState;
   }
 
   exportCsv(): void {
     const rows = this.filteredRows();
-    const csv = [this.columns().join(','), ...rows.map((row) => this.columns().map((column) => `"${String(row[column] ?? '').replaceAll('"', '""')}"`).join(','))].join('\n');
+    const encodeCell = (value: unknown): string => {
+      let text = String(value ?? '');
+      if (typeof value === 'string' && /^[\t\r ]*[=+\-@]/.test(text)) text = `'${text}`;
+      return `"${text.replaceAll('"', '""')}"`;
+    };
+    const csv = [
+      this.columns().map(encodeCell).join(','),
+      ...rows.map((row) => this.columns().map((column) => encodeCell(row[column])).join(',')),
+    ].join('\r\n');
     this.download(new Blob([csv], { type: 'text/csv' }), 'filtered-data.csv');
   }
 
@@ -1007,13 +1170,17 @@ export class App {
 
   projectState(): ProjectState {
     return {
+      version: 1,
       name: this.sourcePath.replace(/\.[^.]+$/, '') || 'Untitled project',
       sourcePath: this.sourcePath,
-      sheets: this.workbookSheets.map((sheet) => sheet.name),
+      sheets: this.activeSheet ? [this.activeSheet] : [],
       activeSheet: this.activeSheet,
+      headerRow: this.headerRow,
       rows: this.rows(),
+      originalRows: this.importedRows,
       columns: this.columns(),
-      schemaOverrides: this.schemaOverrides,
+      originalColumns: this.importedColumns,
+      schemaOverrides: this.schemaOverrides(),
       transformations: this.transformations,
       calculatedFields: this.calculatedFields,
       savedCharts: this.savedCharts,
@@ -1023,7 +1190,20 @@ export class App {
 
   rememberProject(name: string): void {
     this.recentProjects = [name, ...this.recentProjects.filter((item) => item !== name)].slice(0, 6);
-    localStorage.setItem('dvis-recent', JSON.stringify(this.recentProjects));
+    try {
+      localStorage.setItem('dvis-recent', JSON.stringify(this.recentProjects));
+    } catch {
+      this.notification = 'Project is open, but browser storage could not save the recent-project list.';
+    }
+  }
+
+  private readRecentProjects(): string[] {
+    try {
+      const value: unknown = JSON.parse(localStorage.getItem('dvis-recent') || '[]');
+      return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string').slice(0, 6) : [];
+    } catch {
+      return [];
+    }
   }
 
   download(blob: Blob, name: string): void {

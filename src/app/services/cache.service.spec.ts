@@ -49,7 +49,7 @@ describe('CacheService', () => {
       expect(hash).toBeTruthy();
     });
     
-    it('should use first 100 rows for large datasets', () => {
+    it('should include changes after the first 100 rows', () => {
       const largeDataset = Array.from({ length: 200 }, (_, i) => ({ 
         id: i, 
         value: Math.random() 
@@ -57,11 +57,9 @@ describe('CacheService', () => {
       const columns = ['id', 'value'];
       
       const hash = service.hashDataset(largeDataset, columns);
-      expect(hash).toBeTruthy();
-      
-      // Hash should be consistent even with large dataset
-      const hash2 = service.hashDataset(largeDataset, columns);
-      expect(hash).toBe(hash2);
+      const changed = structuredClone(largeDataset);
+      changed[199].value = -1;
+      expect(service.hashDataset(changed, columns)).not.toBe(hash);
     });
     
     it('should generate different hash when column order differs', () => {
@@ -72,9 +70,8 @@ describe('CacheService', () => {
       const hash1 = service.hashDataset(rows, columns1);
       const hash2 = service.hashDataset(rows, columns2);
       
-      // Note: Our implementation sorts columns, so hash should be same
-      // This is intentional to treat differently ordered columns as same schema
-      expect(hash1).toBe(hash2);
+      expect(hash1).not.toBe(hash2);
+      expect(columns1).toEqual(['name', 'age']);
     });
   });
   

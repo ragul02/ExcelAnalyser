@@ -4,7 +4,6 @@ import { ForecastService } from './forecast.service';
 import { RecommendationEngineService } from './recommendation-engine.service';
 import { QualityAnalyzerService } from './quality-analyzer.service';
 import { CacheService } from './cache.service';
-import { TensorFlowService } from './tensorflow.service';
 import { Insight } from '../models/insight.types';
 import { ForecastResult } from '../models/forecast.types';
 import { ChartRecommendation } from '../models/recommendation.types';
@@ -53,7 +52,6 @@ export class AnalyticsService {
   private readonly recommendationEngine = inject(RecommendationEngineService);
   private readonly qualityAnalyzer = inject(QualityAnalyzerService);
   private readonly cacheService = inject(CacheService);
-  private readonly tfService = inject(TensorFlowService);
   private readonly statistics = inject(StatisticsService);
   private worker?: Worker;
   private workerApi?: Remote<AnalyticsWorkerApi>;
@@ -198,13 +196,6 @@ export class AnalyticsService {
       this.analysisProgress.set(0);
       this.analysisStage.set('Initializing analysis...');
       
-      // Initialize TensorFlow if needed (lazy loading)
-      if (!this.tfService.isReady()) {
-        this.analysisStage.set('Loading ML models...');
-        await this.tfService.initialize();
-        this.analysisProgress.set(10);
-      }
-      
       // Detect insights
       this.analysisStage.set('Detecting patterns and insights...');
       this.analysisProgress.set(30);
@@ -275,6 +266,17 @@ export class AnalyticsService {
     }
     
     await this.performAnalysis(rows, columns, profiles);
+  }
+
+  invalidateForDataChange(): void {
+    if (this.debounceTimer) clearTimeout(this.debounceTimer);
+    this.debounceTimer = null;
+    this.currentDataHash.set('');
+    this.insights.set([]);
+    this.currentForecast.set(null);
+    this.qualityScore.set(null);
+    this.recommendations.set([]);
+    this.cacheService.invalidateAllCaches();
   }
 
   /**
@@ -378,9 +380,9 @@ export class AnalyticsService {
       
       // Generate forecast
       console.log(`[AnalyticsService] Generating ${periods}-period forecast for ${measureField} over ${dateField}`);
-      const forecast = periods > 20
-        ? await this.generateForecastWithWorker(dateField, measureField, rows, periods)
-        : await this.forecastService.forecast(dateField, measureField, rows, periods);
+      // Keep one validated forecasting implementation. The worker's lightweight
+      // approximation is not equivalent to the main forecast methods.
+      const forecast = await this.forecastService.forecast(dateField, measureField, rows, periods);
       
       // Cache the forecast
       this.cacheService.cacheForecast(cacheKey, forecast);
@@ -588,13 +590,6 @@ export class AnalyticsService {
   }
   
   /**
-   * Gets memory usage from TensorFlow service
-   */
-  getMemoryInfo(): ReturnType<TensorFlowService['getMemoryInfo']> {
-    return this.tfService.getMemoryInfo();
-  }
-  
-  /**
    * Cleanup method for memory management
    */
   async cleanup(): Promise<void> {
@@ -612,12 +607,6 @@ export class AnalyticsService {
     
     // Clear caches
     this.cacheService.invalidateAllCaches();
-    
-    // Dispose TensorFlow resources if needed
-    if (this.tfService.isReady() && this.tfService.isMemoryExceeded(200)) {
-      await this.tfService.dispose();
-      console.log('[AnalyticsService] TensorFlow resources disposed due to memory pressure');
-    }
     
     console.log('[AnalyticsService] Cleanup completed');
   }
